@@ -1,12 +1,6 @@
-streamlit==1.32.2
+streamlit
 pandas
-Pillow
+Pillow==10.4.0
 opencv-python-headless
 google-generativeai
 openai
-torch
-torchvision
-torchaudio
-transformers
-einops
-timm
