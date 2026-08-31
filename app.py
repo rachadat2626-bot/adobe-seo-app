@@ -54,7 +54,6 @@ def save_users(db):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
 
-# กำหนดรหัส Admin เริ่มต้น (superadmin / gappy789)
 try:
     ADMIN_USER = st.secrets.get("ADMIN_USER", "superadmin")
     ADMIN_PASS = st.secrets.get("ADMIN_PASS", "gappy789")
@@ -65,7 +64,7 @@ except Exception:
 user_db = load_users()
 
 # ==========================================
-# 2. ระบบจำสถานะเมื่อ Refresh หน้าจอ (Auto-Login)
+# 2. ระบบจำสถานะเมื่อ Refresh หน้าจอ (Auto-Login & State Persistence)
 # ==========================================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -77,6 +76,8 @@ if "openai_api_key" not in st.session_state:
     st.session_state["openai_api_key"] = ""
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
 
 query_token = st.query_params.get("session_token", None)
 if query_token and not st.session_state["logged_in"]:
@@ -84,6 +85,9 @@ if query_token and not st.session_state["logged_in"]:
         st.session_state["logged_in"] = True
         st.session_state["current_user"] = ADMIN_USER
         st.session_state["is_admin"] = True
+        if ADMIN_USER in user_db:
+            st.session_state["gemini_api_key"] = user_db[ADMIN_USER].get("gemini_api_key", "")
+            st.session_state["openai_api_key"] = user_db[ADMIN_USER].get("openai_api_key", "")
     else:
         for u, data in user_db.items():
             if data.get("token") == query_token and data.get("status") == "Approved":
@@ -114,6 +118,9 @@ def login_and_register_screen():
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = username
                     st.session_state["is_admin"] = True
+                    if username in user_db:
+                        st.session_state["gemini_api_key"] = user_db[username].get("gemini_api_key", "")
+                        st.session_state["openai_api_key"] = user_db[username].get("openai_api_key", "")
                     st.success("✅ เข้าสู่ระบบสำเร็จ (Admin)")
                     time.sleep(0.5)
                     st.rerun()
@@ -216,34 +223,54 @@ def main_app():
     st.title("SEO Generator")
     st.caption(f"🚀 ยินดีต้อนรับคุณ **{st.session_state['current_user']}**")
     
-    col1, col2 = st.columns([8, 2])
+    col1, col2, col3 = st.columns([6, 2, 2])
     with col2:
+        if st.button("🔄 ทำรายการใหม่", use_container_width=True):
+            st.session_state["uploader_key"] += 1
+            st.rerun()
+    with col3:
         if st.session_state["is_admin"]:
             if st.button("🛡️ หลังบ้าน Admin", use_container_width=True):
                 st.session_state["show_admin_panel"] = True
                 st.rerun()
-        if st.button("🚪 ออกจากระบบ", use_container_width=True):
-            st.session_state["logged_in"] = False
-            st.session_state["current_user"] = ""
-            st.session_state["is_admin"] = False
-            st.session_state["openai_api_key"] = ""
-            st.session_state["gemini_api_key"] = ""
-            st.query_params.clear()
-            st.rerun()
+        else:
+            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+                st.session_state["logged_in"] = False
+                st.session_state["current_user"] = ""
+                st.session_state["is_admin"] = False
+                st.session_state["openai_api_key"] = ""
+                st.session_state["gemini_api_key"] = ""
+                st.query_params.clear()
+                st.rerun()
+
+    if st.session_state["is_admin"]:
+        with col3:
+            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+                st.session_state["logged_in"] = False
+                st.session_state["current_user"] = ""
+                st.session_state["is_admin"] = False
+                st.session_state["openai_api_key"] = ""
+                st.session_state["gemini_api_key"] = ""
+                st.query_params.clear()
+                st.rerun()
 
     with st.sidebar:
         st.header("🔑 ตั้งค่า Cloud Vision AI")
         api_choice = st.radio("🎯 เลือก AI Engine:", ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"])
         st.write("---")
         input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
-        input_gemini = st.text_input("Gemini API Key (ฟรี):", value=st.session_state["gemini_api_key"], type="password")
+        
+        # ลบคำว่า (ฟรี) ออกตามคำขอ
+        input_gemini = st.text_input("Gemini API Key:", value=st.session_state["gemini_api_key"], type="password")
         
         if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary"):
             st.session_state["openai_api_key"] = input_openai.strip()
             st.session_state["gemini_api_key"] = input_gemini.strip()
             
             user_name = st.session_state.get("current_user", "")
-            if user_name in user_db:
+            if user_name:
+                if user_name not in user_db:
+                    user_db[user_name] = {"password": "", "status": "Approved", "gemini_api_key": "", "openai_api_key": "", "token": ""}
                 user_db[user_name]["gemini_api_key"] = input_gemini.strip()
                 user_db[user_name]["openai_api_key"] = input_openai.strip()
                 save_users(user_db)
@@ -391,7 +418,12 @@ def main_app():
         return parse_ai_response(res.choices[0].message.content, is_video)
 
     st.write("รองรับ: **JPG, JPEG, PNG, MP4, MOV** (สูงสุด 100 ไฟล์ต่อรอบ)")
-    uploaded_files = st.file_uploader("ลากไฟล์มาวางที่นี่", type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi", "webm"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "ลากไฟล์มาวางที่นี่", 
+        type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi", "webm"], 
+        accept_multiple_files=True,
+        key=f"uploader_{st.session_state['uploader_key']}"
+    )
 
     if uploaded_files:
         st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
