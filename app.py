@@ -8,7 +8,8 @@ from io import BytesIO
 import time
 import tempfile
 import os
-import ast # เพิ่มเข้ามาเพื่ออ่านค่าจาก Secrets
+import ast
+import json
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -26,9 +27,7 @@ except ImportError:
 
 st.set_page_config(page_title="SEO Generator", layout="wide")
 
-# ==========================================
-# 1. โค้ดซ่อน UI ของ Streamlit ทั้งหมด
-# ==========================================
+# ซ่อน UI ของ Streamlit
 st.markdown("""
     <style>
     [data-testid="stHeader"] { display: none; }
@@ -38,74 +37,169 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. ดึงฐานข้อมูล User จาก Streamlit Secrets
+# 1. ระบบฐานข้อมูล (บันทึกในไฟล์ JSON บนเซิร์ฟเวอร์)
 # ==========================================
+DB_FILE = "users_db.json"
+
+def load_users():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_users(db):
+    with open(DB_FILE, "w") as f:
+        json.dump(db, f)
+
+# ดึงรหัส Admin หลักจาก Secrets (หรือตั้งค่าเริ่มต้น)
 try:
-    # อ่านรายชื่อจากหลังบ้าน Streamlit 
-    raw_users = st.secrets.get("APPROVED_USERS", '{"admin": "1234"}')
-    
-    # แปลงข้อความให้กลายเป็น Dictionary
-    if isinstance(raw_users, dict):
-        APPROVED_USERS = raw_users
-    else:
-        APPROVED_USERS = ast.literal_eval(raw_users)
+    ADMIN_USER = st.secrets.get("ADMIN_USER", "admin")
+    ADMIN_PASS = st.secrets.get("ADMIN_PASS", "1234")
 except Exception:
-    # ถ้าตั้งค่าหลังบ้านผิดพลาด จะเหลือแค่แอดมินให้เข้าได้เพื่อความปลอดภัย
-    APPROVED_USERS = {"admin": "1234"}
+    ADMIN_USER = "admin"
+    ADMIN_PASS = "1234"
+
+# โหลดฐานข้อมูลเริ่มต้น
+user_db = load_users()
 
 # ==========================================
-# 3. ระบบเช็กสถานะการ Login
+# 2. ตัวแปร Session
 # ==========================================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "current_user" not in st.session_state:
     st.session_state["current_user"] = ""
+if "is_admin" not in st.session_state:
+    st.session_state["is_admin"] = False
 if "openai_api_key" not in st.session_state:
     st.session_state["openai_api_key"] = ""
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 
-def login_screen():
-    st.title("🔒 เข้าสู่ระบบ (SEO Generator)")
-    st.caption("ระบบจำกัดสิทธิ์การใช้งาน กรุณาเข้าสู่ระบบก่อนใช้งาน")
+# ==========================================
+# 3. หน้า Login & Register
+# ==========================================
+def login_and_register_screen():
+    st.title("🔒 เข้าสู่ระบบ / สมัครสมาชิก")
+    tab1, tab2 = st.tabs(["🔑 เข้าสู่ระบบ (Login)", "📝 สมัครสมาชิก (Register)"])
     
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("เข้าสู่ระบบ", type="primary")
-        
-        if submit:
-            if username in APPROVED_USERS and APPROVED_USERS[username] == password:
-                st.session_state["logged_in"] = True
-                st.session_state["current_user"] = username
-                st.success("✅ เข้าสู่ระบบสำเร็จ! กำลังพาท่านเข้าสู่ระบบ...")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("❌ Username หรือ Password ไม่ถูกต้อง (ติดต่อ Admin เพื่อขอสิทธิ์)")
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("Username").strip()
+            password = st.text_input("Password", type="password").strip()
+            submit_login = st.form_submit_button("เข้าสู่ระบบ", type="primary")
+            
+            if submit_login:
+                if username == ADMIN_USER and password == ADMIN_PASS:
+                    st.session_state["logged_in"] = True
+                    st.session_state["current_user"] = username
+                    st.session_state["is_admin"] = True
+                    st.success("✅ เข้าสู่ระบบสำเร็จ (Admin)")
+                    time.sleep(1)
+                    st.rerun()
+                elif username in user_db and user_db[username]["password"] == password:
+                    if user_db[username]["status"] == "Approved":
+                        st.session_state["logged_in"] = True
+                        st.session_state["current_user"] = username
+                        st.session_state["is_admin"] = False
+                        st.success("✅ เข้าสู่ระบบสำเร็จ")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("⏳ บัญชีของคุณอยู่ระหว่างรอ Admin อนุมัติการใช้งาน")
+                else:
+                    st.error("❌ Username หรือ Password ไม่ถูกต้อง")
+
+    with tab2:
+        with st.form("register_form"):
+            new_user = st.text_input("ตั้ง Username").strip()
+            new_pass = st.text_input("ตั้ง Password", type="password").strip()
+            confirm_pass = st.text_input("ยืนยัน Password", type="password").strip()
+            submit_reg = st.form_submit_button("ส่งข้อมูลสมัครสมาชิก")
+            
+            if submit_reg:
+                if not new_user or not new_pass:
+                    st.error("❌ กรุณากรอกข้อมูลให้ครบถ้วน")
+                elif new_pass != confirm_pass:
+                    st.error("❌ รหัสผ่านทั้งสองช่องไม่ตรงกัน")
+                elif new_user == ADMIN_USER or new_user in user_db:
+                    st.error("⚠️ Username นี้มีผู้ใช้งานในระบบแล้ว")
+                else:
+                    user_db[new_user] = {"password": new_pass, "status": "Pending"}
+                    save_users(user_db)
+                    st.success("🎉 สมัครสมาชิกเรียบร้อยแล้ว! กรุณารอ Admin อนุมัติการใช้งาน")
 
 # ==========================================
-# 4. หน้าต่างแอปพลิเคชันหลัก (เมื่อ Login ผ่าน)
+# 4. หน้าต่าง Admin Dashboard (ระบบหลังบ้าน)
+# ==========================================
+def admin_dashboard():
+    st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
+    st.caption("หน้าต่างนี้เห็นเฉพาะคุณเท่านั้น (Admin)")
+    
+    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)"):
+        st.session_state["show_admin_panel"] = False
+        st.rerun()
+        
+    st.write("---")
+    st.subheader("📋 รายชื่อผู้ใช้งาน (รออนุมัติ / อนุมัติแล้ว)")
+    
+    if not user_db:
+        st.info("ยังไม่มีผู้ใช้งานสมัครเข้ามาในระบบ")
+    else:
+        # สร้างตารางให้ Admin กดเลือกง่ายๆ
+        for user, data in user_db.items():
+            col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+            col1.write(f"**{user}**")
+            col2.write(f"สถานะ: `{data['status']}`")
+            
+            if data["status"] == "Pending":
+                if col3.button("✅ อนุมัติ (Approve)", key=f"app_{user}"):
+                    user_db[user]["status"] = "Approved"
+                    save_users(user_db)
+                    st.rerun()
+            else:
+                if col3.button("⛔ ระงับ (Revoke)", key=f"rev_{user}"):
+                    user_db[user]["status"] = "Pending"
+                    save_users(user_db)
+                    st.rerun()
+                    
+            if col4.button("🗑️ ลบทิ้ง (Delete)", key=f"del_{user}"):
+                del user_db[user]
+                save_users(user_db)
+                st.rerun()
+            st.divider()
+
+# ==========================================
+# 5. หน้าต่างแอปพลิเคชันหลัก (เมื่อ Login ผ่าน)
 # ==========================================
 def main_app():
+    if st.session_state["is_admin"]:
+        if "show_admin_panel" not in st.session_state:
+            st.session_state["show_admin_panel"] = False
+            
+        if st.session_state["show_admin_panel"]:
+            admin_dashboard()
+            return
+            
     st.title("SEO Generator")
-    st.caption(f"🚀 ยินดีต้อนรับคุณ **{st.session_state['current_user']}** | รองรับพรีวิวรูปภาพ & วิดีโอ")
+    st.caption(f"🚀 ยินดีต้อนรับคุณ **{st.session_state['current_user']}**")
     
-    if st.button("🚪 ออกจากระบบ", size="small"):
-        st.session_state["logged_in"] = False
-        st.rerun()
+    col1, col2 = st.columns([8, 2])
+    with col2:
+        if st.session_state["is_admin"]:
+            if st.button("🛡️ หลังบ้าน Admin", use_container_width=True):
+                st.session_state["show_admin_panel"] = True
+                st.rerun()
+        if st.button("🚪 ออกจากระบบ", use_container_width=True):
+            st.session_state["logged_in"] = False
+            st.rerun()
 
     with st.sidebar:
         st.header("🔑 ตั้งค่า Cloud Vision AI")
-        
-        api_choice = st.radio(
-            "🎯 เลือก AI Engine ที่ต้องการใช้งาน:",
-            ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"]
-        )
-        
+        api_choice = st.radio("🎯 เลือก AI Engine:", ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"])
         st.write("---")
         input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
-        input_gemini = st.text_input("Gemini API Key (ฟรีจาก Google):", value=st.session_state["gemini_api_key"], type="password")
+        input_gemini = st.text_input("Gemini API Key (ฟรี):", value=st.session_state["gemini_api_key"], type="password")
         
         if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary"):
             st.session_state["openai_api_key"] = input_openai.strip()
@@ -153,25 +247,16 @@ def main_app():
     def parse_ai_response(text, is_video=False):
         title_match = re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE)
         kw_match = re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE)
-        
         raw_title = title_match.group(1).strip() if title_match else text.split('\n')[0].replace('TITLE:', '').strip()
         raw_kw = kw_match.group(1).strip() if kw_match else text.split('\n')[-1].replace('KEYWORDS:', '').strip()
-        
         title = clean_title_ascii(raw_title)[:195]
         if len(title) < 180:
             title = (title + " for commercial marketing visual storytelling and creative content design projects asset")[:195]
-            
         kw_list = [clean_ascii(k).lower() for k in raw_kw.split(',') if clean_ascii(k)]
-        
-        fillers = [
-            "commercial asset", "stock Media", "high quality", "digital asset", "design element",
-            "modern concept", "isolated background", "vivid colors", "artistic detail", "trending concept",
-            "marketing resource", "premium aesthetic", "decorative resource", "visual content", "niche market"
-        ]
+        fillers = ["commercial asset", "stock Media", "high quality", "digital asset", "design element", "modern concept", "isolated background", "vivid colors", "artistic detail", "trending concept"]
         for f in fillers:
             if len(kw_list) >= 50: break
             if f not in kw_list: kw_list.append(f)
-            
         keywords_str = ", ".join(kw_list[:50])
         category = "Videos" if is_video else "Illustrations/Clip Art"
         return title, keywords_str, category
@@ -180,21 +265,17 @@ def main_app():
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel("gemini-1.5-flash")
         prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
-        
         is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
         uploaded_file.seek(0)
-        
         if is_video:
             ext = os.path.splitext(uploaded_file.name)[1]
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                 tmp.write(uploaded_file.getbuffer())
                 tmp_path = tmp.name
-                
             g_file = genai.upload_file(path=tmp_path)
             while g_file.state.name == "PROCESSING":
                 time.sleep(2)
                 g_file = genai.get_file(g_file.name)
-                
             response = model.generate_content([prompt, g_file])
             try: genai.delete_file(g_file.name)
             except: pass
@@ -203,7 +284,6 @@ def main_app():
             img = Image.open(uploaded_file).convert("RGB")
             square_img = make_square_image(img, 512)
             response = model.generate_content([prompt, square_img])
-            
         return parse_ai_response(response.text, is_video)
 
     def process_with_openai(uploaded_file, api_key):
@@ -211,11 +291,9 @@ def main_app():
         prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
         is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
         uploaded_file.seek(0)
-        
         img = Image.open(uploaded_file).convert("RGB") if not is_video else Image.new("RGB", (512, 512), (200, 200, 200))
         square_img = make_square_image(img, 512)
         base64_img = encode_image_to_base64(square_img)
-        
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
@@ -229,7 +307,6 @@ def main_app():
     if uploaded_files:
         st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
         status_placeholders = {}
-        
         with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=True):
             cols_per_row = 5
             for i in range(0, len(uploaded_files), cols_per_row):
@@ -252,7 +329,6 @@ def main_app():
                                 st.caption(f"[{idx}] 🎥 {file.name[:12]}...")
                             except Exception:
                                 st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
-                        
                         status_placeholders[file.name] = st.empty()
                         status_placeholders[file.name].caption("⏳ รอประมวลผล")
 
@@ -275,13 +351,11 @@ def main_app():
                         else:
                             if idx > 0: time.sleep(0.5)
                             t, k, c = process_with_openai(file, openai_api_key)
-                            
                         status_placeholders[file.name].success("✅ สำเร็จ")
                         results.append({"Filename": file.name, "Title": t, "Keywords": k, "Category": c, "Release Info": "", "Editorial": "No"})
                     except Exception as e:
                         status_placeholders[file.name].error(f"❌ Error: {e}")
                     bar.progress((idx + 1) / len(uploaded_files))
-                    
                 if results:
                     st.success("🎉 เสร็จสมบูรณ์! พร้อมดาวน์โหลดไฟล์ CSV")
                     df = pd.DataFrame(results)
@@ -289,9 +363,9 @@ def main_app():
                     st.download_button("📥 ดาวน์โหลด CSV สำหรับ Adobe Stock", data=df.to_csv(index=False, encoding="utf-8-sig"), file_name="adobe_stock_seo.csv", mime="text/csv", type="primary")
 
 # ==========================================
-# 5. ตัวควบคุมหน้าจอ (แสดงผลตามสถานะ Login)
+# ตัวควบคุมหน้าจอ 
 # ==========================================
 if not st.session_state["logged_in"]:
-    login_screen()
+    login_and_register_screen()
 else:
     main_app()
