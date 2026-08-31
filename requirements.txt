@@ -1,6 +1,5 @@
 streamlit
 pandas
 Pillow
-av
 google-generativeai
 openai
