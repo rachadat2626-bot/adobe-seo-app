@@ -9,6 +9,7 @@ import time
 import tempfile
 import os
 
+# ปลดล็อกขนาดไฟล์ภาพขนาดใหญ่
 Image.MAX_IMAGE_PIXELS = None
 
 try:
@@ -31,7 +32,7 @@ if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 
 st.title("⚡ Adobe Stock SEO Generator")
-st.caption("🚀 รองรับ รูปภาพ & วิดีโอ | ส่งตรงเข้า Cloud AI | ติดตั้งง่าย รันไว 100%")
+st.caption("🚀 รองรับ รูปภาพ & วิดีโอ | ระบบพรีวิวรูปภาพ | ส่งตรงเข้า Cloud AI ไร้ Error 100%")
 
 with st.sidebar:
     st.header("🔑 ตั้งค่า Cloud Vision AI")
@@ -82,11 +83,30 @@ def encode_image_to_base64(pil_img):
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
 
 def parse_ai_response(text, is_video=False):
-    title = clean_title_ascii(re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE).group(1) if re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE) else text.split('\n')[0])[:195]
-    if len(title) < 180: title = (title + " for commercial marketing visual storytelling and creative content design projects asset")[:195]
-    kw = re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE).group(1) if re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE) else text.split('\n')[-1]
-    kw_list = [clean_ascii(k).lower() for k in kw.split(',')]
-    return title, ", ".join(kw_list[:50]), "Videos" if is_video else "Illustrations/Clip Art"
+    title_match = re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE)
+    kw_match = re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE)
+    
+    raw_title = title_match.group(1).strip() if title_match else text.split('\n')[0].replace('TITLE:', '').strip()
+    raw_kw = kw_match.group(1).strip() if kw_match else text.split('\n')[-1].replace('KEYWORDS:', '').strip()
+    
+    title = clean_title_ascii(raw_title)[:195]
+    if len(title) < 180:
+        title = (title + " for commercial marketing visual storytelling and creative content design projects asset")[:195]
+        
+    kw_list = [clean_ascii(k).lower() for k in raw_kw.split(',') if clean_ascii(k)]
+    
+    fillers = [
+        "commercial asset", "stock Media", "high quality", "digital asset", "design element",
+        "modern concept", "isolated background", "vivid colors", "artistic detail", "trending concept",
+        "marketing resource", "premium aesthetic", "decorative resource", "visual content", "niche market"
+    ]
+    for f in fillers:
+        if len(kw_list) >= 50: break
+        if f not in kw_list: kw_list.append(f)
+        
+    keywords_str = ", ".join(kw_list[:50])
+    category = "Videos" if is_video else "Illustrations/Clip Art"
+    return title, keywords_str, category
 
 def process_with_gemini(uploaded_file, api_key):
     genai.configure(api_key=api_key)
@@ -94,6 +114,7 @@ def process_with_gemini(uploaded_file, api_key):
     prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
     
     is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
+    uploaded_file.seek(0)
     
     if is_video:
         ext = os.path.splitext(uploaded_file.name)[1]
@@ -121,6 +142,7 @@ def process_with_openai(uploaded_file, api_key):
     client = OpenAI(api_key=api_key)
     prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
     is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
+    uploaded_file.seek(0)
     
     img = Image.open(uploaded_file).convert("RGB") if not is_video else Image.new("RGB", (512, 512), (200, 200, 200))
     square_img = make_square_image(img, 512)
@@ -133,15 +155,38 @@ def process_with_openai(uploaded_file, api_key):
     )
     return parse_ai_response(res.choices[0].message.content, is_video)
 
+# UI อัปโหลดไฟล์
 st.write("รองรับ: **JPG, JPEG, PNG, MP4, MOV** (สูงสุด 100 ไฟล์ต่อรอบ)")
 uploaded_files = st.file_uploader("ลากไฟล์มาวางที่นี่", type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi", "webm"], accept_multiple_files=True)
 
 if uploaded_files:
-    status_placeholders = {}
     st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
-    for file in uploaded_files:
-        status_placeholders[file.name] = st.empty()
-        status_placeholders[file.name].caption(f"⏳ {file.name} - รอประมวลผล")
+    status_placeholders = {}
+    
+    # ส่วนแสดงพรีวิวไฟล์รูปภาพและวิดีโอ (Preview Gallery)
+    with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=True):
+        cols_per_row = 5
+        for i in range(0, len(uploaded_files), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, file in enumerate(uploaded_files[i:i+cols_per_row]):
+                idx = i + j + 1
+                with cols[j]:
+                    is_vid = file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
+                    file.seek(0)
+                    if not is_vid:
+                        try:
+                            preview_img = Image.open(file)
+                            preview_img.thumbnail((300, 300))
+                            st.image(preview_img, caption=f"[{idx}] {file.name[:12]}...", use_container_width=True)
+                        except Exception:
+                            st.warning(f"[{idx}] 🖼️ {file.name[:12]}...")
+                    else:
+                        st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
+                    
+                    status_placeholders[file.name] = st.empty()
+                    status_placeholders[file.name].caption("⏳ รอประมวลผล")
+
+    st.write("---")
 
     if st.button("🚀 เริ่มสร้าง CSV ทันที", use_container_width=True, type="primary"):
         if not openai_api_key and not gemini_api_key:
@@ -150,7 +195,7 @@ if uploaded_files:
             results = []
             bar = st.progress(0)
             for idx, file in enumerate(uploaded_files):
-                status_placeholders[file.name].info(f"🔄 กำลังประมวลผล {file.name}...")
+                status_placeholders[file.name].info("🔄 ประมวลผล...")
                 try:
                     if gemini_api_key:
                         if idx > 0: time.sleep(4.5)
@@ -159,14 +204,14 @@ if uploaded_files:
                         if idx > 0: time.sleep(0.5)
                         t, k, c = process_with_openai(file, openai_api_key)
                         
-                    status_placeholders[file.name].success(f"✅ {file.name} สำเร็จ")
+                    status_placeholders[file.name].success("✅ สำเร็จ")
                     results.append({"Filename": file.name, "Title": t, "Keywords": k, "Category": c, "Release Info": "", "Editorial": "No"})
                 except Exception as e:
-                    status_placeholders[file.name].error(f"❌ {file.name} Error: {e}")
+                    status_placeholders[file.name].error(f"❌ Error: {e}")
                 bar.progress((idx + 1) / len(uploaded_files))
                 
             if results:
                 st.success("🎉 เสร็จสมบูรณ์! พร้อมดาวน์โหลดไฟล์ CSV")
                 df = pd.DataFrame(results)
-                st.dataframe(df)
-                st.download_button("📥 ดาวน์โหลด CSV", data=df.to_csv(index=False, encoding="utf-8-sig"), file_name="adobe_seo.csv", mime="text/csv", type="primary")
+                st.dataframe(df[["Filename", "Title", "Keywords", "Category", "Release Info", "Editorial"]])
+                st.download_button("📥 ดาวน์โหลด CSV สำหรับ Adobe Stock", data=df.to_csv(index=False, encoding="utf-8-sig"), file_name="adobe_stock_seo.csv", mime="text/csv", type="primary")
