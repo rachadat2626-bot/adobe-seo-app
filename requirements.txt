@@ -1,6 +1,6 @@
 streamlit
 pandas
-Pillow==10.4.0
+pillow
 opencv-python-headless
 google-generativeai
 openai
