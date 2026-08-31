@@ -1,6 +1,6 @@
 streamlit
 pandas
 pillow
-opencv-python-headless
+opencv-python-headless==4.9.0.80 --only-binary :all:
 google-generativeai
 openai
