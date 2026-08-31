@@ -54,12 +54,13 @@ def save_users(db):
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=2)
 
+# กำหนดรหัส Admin เริ่มต้น (superadmin / gappy789)
 try:
-    ADMIN_USER = st.secrets.get("ADMIN_USER", "admin")
-    ADMIN_PASS = st.secrets.get("ADMIN_PASS", "1234")
+    ADMIN_USER = st.secrets.get("ADMIN_USER", "superadmin")
+    ADMIN_PASS = st.secrets.get("ADMIN_PASS", "gappy789")
 except Exception:
-    ADMIN_USER = "admin"
-    ADMIN_PASS = "1234"
+    ADMIN_USER = "superadmin"
+    ADMIN_PASS = "gappy789"
 
 user_db = load_users()
 
@@ -77,7 +78,6 @@ if "openai_api_key" not in st.session_state:
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 
-# เช็ก Token จาก URL เพื่อ Auto-Login เมื่อ Refresh
 query_token = st.query_params.get("session_token", None)
 if query_token and not st.session_state["logged_in"]:
     if query_token == f"admin_token_{ADMIN_PASS}":
@@ -236,13 +236,12 @@ def main_app():
         api_choice = st.radio("🎯 เลือก AI Engine:", ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"])
         st.write("---")
         input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
-        input_gemini = st.text_input("Gemini API Key :", value=st.session_state["gemini_api_key"], type="password")
+        input_gemini = st.text_input("Gemini API Key (ฟรี):", value=st.session_state["gemini_api_key"], type="password")
         
         if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary"):
             st.session_state["openai_api_key"] = input_openai.strip()
             st.session_state["gemini_api_key"] = input_gemini.strip()
             
-            # บันทึก API Key ลงในฐานข้อมูลของผู้ใช้งานท่านนี้ถาวร
             user_name = st.session_state.get("current_user", "")
             if user_name in user_db:
                 user_db[user_name]["gemini_api_key"] = input_gemini.strip()
@@ -306,10 +305,24 @@ def main_app():
         category = "Videos" if is_video else "Illustrations/Clip Art"
         return title, keywords_str, category
 
-    # ปรับแต่งระบบ Gemini API รองรับหลายโมเดล ป้องกันการล้มเหลวบนออนไลน์
-    def process_with_gemini(uploaded_file, api_key):
+    def get_available_gemini_models(api_key):
         genai.configure(api_key=api_key)
-        models_to_try = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+        try:
+            valid_models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    name = m.name.replace('models/', '')
+                    valid_models.append(name)
+            
+            flash_models = [m for m in valid_models if 'flash' in m.lower()]
+            other_models = [m for m in valid_models if 'flash' not in m.lower()]
+            result = flash_models + other_models
+            return result if result else ["gemini-1.5-flash", "gemini-2.5-flash"]
+        except Exception:
+            return ["gemini-1.5-flash", "gemini-2.5-flash"]
+
+    def process_with_gemini(uploaded_file, api_key):
+        models_to_try = get_available_gemini_models(api_key)
         prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
         
         is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
@@ -358,7 +371,7 @@ def main_app():
                     continue
 
         if not response_text:
-            raise Exception(f"Gemini Error: {last_err if last_err else 'No response from API'}")
+            raise Exception(f"Gemini API Error: {last_err if last_err else 'No response'}")
             
         return parse_ai_response(response_text, is_video)
 
