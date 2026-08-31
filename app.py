@@ -9,7 +9,6 @@ import time
 import tempfile
 import os
 
-# ปลดล็อกขนาดไฟล์ภาพขนาดใหญ่
 Image.MAX_IMAGE_PIXELS = None
 
 try:
@@ -24,18 +23,28 @@ try:
 except ImportError:
     HAS_OPENAI = False
 
-st.set_page_config(page_title="Adobe Stock SEO Cloud Generator", layout="wide")
+st.set_page_config(page_title="SEO Generator", layout="wide")
 
 if "openai_api_key" not in st.session_state:
     st.session_state["openai_api_key"] = ""
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 
-st.title("⚡ Adobe Stock SEO Generator")
-st.caption("🚀 รองรับ รูปภาพ & วิดีโอ | ระบบพรีวิวรูปภาพ | ส่งตรงเข้า Cloud AI ไร้ Error 100%")
+# เปลี่ยนชื่อแอปพลิเคชันตามต้องการ
+st.title("SEO Generator")
+st.caption("🚀 รองรับ พรีวิวรูปภาพ & พรีวิวเล่นวิดีโอ | เลือกสลับใช้ Gemini หรือ OpenAI API ได้ตามใจชอบ")
 
 with st.sidebar:
     st.header("🔑 ตั้งค่า Cloud Vision AI")
+    
+    # เพิ่มปุ่มกดเลือกใช้ API Key ตัวที่ต้องการ
+    api_choice = st.radio(
+        "🎯 เลือก AI Engine ที่ต้องการใช้งาน:",
+        ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"]
+    )
+    
+    st.write("---")
+    
     input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
     input_gemini = st.text_input("Gemini API Key (ฟรีจาก Google):", value=st.session_state["gemini_api_key"], type="password")
     
@@ -48,12 +57,16 @@ with st.sidebar:
     gemini_api_key = st.session_state["gemini_api_key"]
 
     st.write("---")
-    if openai_api_key:
-        st.success("🤖 เปิดใช้งาน OpenAI Vision")
-    elif gemini_api_key:
-        st.success("⚡ เปิดใช้งาน Gemini Vision (รองรับวิดีโอเต็มคลิป)")
+    if "Gemini" in api_choice:
+        if gemini_api_key:
+            st.success("⚡ กำลังเปิดใช้งาน: Gemini Vision")
+        else:
+            st.warning("⚠️ กรุณากรอก Gemini API Key และกดบันทึก")
     else:
-        st.warning("⚠️ กรุณาใส่ API Key อย่างน้อย 1 ช่อง")
+        if openai_api_key:
+            st.success("🤖 กำลังเปิดใช้งาน: OpenAI Vision")
+        else:
+            st.warning("⚠️ กรุณากรอก OpenAI API Key และกดบันทึก")
 
 def clean_ascii(s):
     if not s: return ""
@@ -155,7 +168,6 @@ def process_with_openai(uploaded_file, api_key):
     )
     return parse_ai_response(res.choices[0].message.content, is_video)
 
-# UI อัปโหลดไฟล์
 st.write("รองรับ: **JPG, JPEG, PNG, MP4, MOV** (สูงสุด 100 ไฟล์ต่อรอบ)")
 uploaded_files = st.file_uploader("ลากไฟล์มาวางที่นี่", type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi", "webm"], accept_multiple_files=True)
 
@@ -163,7 +175,6 @@ if uploaded_files:
     st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
     status_placeholders = {}
     
-    # ส่วนแสดงพรีวิวไฟล์รูปภาพและวิดีโอ (Preview Gallery)
     with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=True):
         cols_per_row = 5
         for i in range(0, len(uploaded_files), cols_per_row):
@@ -181,7 +192,11 @@ if uploaded_files:
                         except Exception:
                             st.warning(f"[{idx}] 🖼️ {file.name[:12]}...")
                     else:
-                        st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
+                        try:
+                            st.video(file)
+                            st.caption(f"[{idx}] 🎥 {file.name[:12]}...")
+                        except Exception:
+                            st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
                     
                     status_placeholders[file.name] = st.empty()
                     status_placeholders[file.name].caption("⏳ รอประมวลผล")
@@ -189,15 +204,19 @@ if uploaded_files:
     st.write("---")
 
     if st.button("🚀 เริ่มสร้าง CSV ทันที", use_container_width=True, type="primary"):
-        if not openai_api_key and not gemini_api_key:
-            st.error("❌ กรุณากรอก API Key ในแถบด้านซ้ายก่อน")
+        # ตรวจสอบ API Key ตามปุ่ม radio ที่ผู้ใช้เลือก
+        if "Gemini" in api_choice and not gemini_api_key:
+            st.error("❌ คุณเลือกใช้ Gemini API กรุณากรอก Gemini API Key ในแถบด้านซ้ายก่อน")
+        elif "OpenAI" in api_choice and not openai_api_key:
+            st.error("❌ คุณเลือกใช้ OpenAI API กรุณากรอก OpenAI API Key ในแถบด้านซ้ายก่อน")
         else:
             results = []
             bar = st.progress(0)
             for idx, file in enumerate(uploaded_files):
                 status_placeholders[file.name].info("🔄 ประมวลผล...")
                 try:
-                    if gemini_api_key:
+                    # ทำงานตาม API ที่ผู้ใช้เลือกกด
+                    if "Gemini" in api_choice:
                         if idx > 0: time.sleep(4.5)
                         t, k, c = process_with_gemini(file, gemini_api_key)
                     else:
