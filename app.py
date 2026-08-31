@@ -8,6 +8,7 @@ from io import BytesIO
 import time
 import tempfile
 import os
+import ast # เพิ่มเข้ามาเพื่ออ่านค่าจาก Secrets
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -30,24 +31,27 @@ st.set_page_config(page_title="SEO Generator", layout="wide")
 # ==========================================
 st.markdown("""
     <style>
-    /* ซ่อน Header ด้านบน (GitHub, เมนู) */
     [data-testid="stHeader"] { display: none; }
-    /* ซ่อน Footer (Made with Streamlit) */
     footer { visibility: hidden; }
-    /* ซ่อนปุ่ม Manage app แบบบังคับ (เผื่อหลุด) */
     .viewerBadge_container__1QSob, .viewerBadge_link__1S137 { display: none !important; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. ฐานข้อมูล User (เพิ่ม/ลด ชื่อเพื่อนตรงนี้)
+# 2. ดึงฐานข้อมูล User จาก Streamlit Secrets
 # ==========================================
-# รูปแบบ: {"Username": "Password"}
-APPROVED_USERS = {
-    "admin": "1234",      # รหัสของคุณเอง
-    "friend1": "5555",    # รหัสของเพื่อนคนที่ 1
-    "friend2": "9999"     # รหัสของเพื่อนคนที่ 2
-}
+try:
+    # อ่านรายชื่อจากหลังบ้าน Streamlit 
+    raw_users = st.secrets.get("APPROVED_USERS", '{"admin": "1234"}')
+    
+    # แปลงข้อความให้กลายเป็น Dictionary
+    if isinstance(raw_users, dict):
+        APPROVED_USERS = raw_users
+    else:
+        APPROVED_USERS = ast.literal_eval(raw_users)
+except Exception:
+    # ถ้าตั้งค่าหลังบ้านผิดพลาด จะเหลือแค่แอดมินให้เข้าได้เพื่อความปลอดภัย
+    APPROVED_USERS = {"admin": "1234"}
 
 # ==========================================
 # 3. ระบบเช็กสถานะการ Login
@@ -61,7 +65,6 @@ if "openai_api_key" not in st.session_state:
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 
-# ฟังก์ชันหน้า Login
 def login_screen():
     st.title("🔒 เข้าสู่ระบบ (SEO Generator)")
     st.caption("ระบบจำกัดสิทธิ์การใช้งาน กรุณาเข้าสู่ระบบก่อนใช้งาน")
