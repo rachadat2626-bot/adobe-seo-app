@@ -25,19 +25,26 @@ except ImportError:
 
 st.set_page_config(page_title="SEO Generator", layout="wide")
 
+# ซ่อนไอคอน GitHub, ดินสอ และเมนูด้านบนทั้งหมด
+st.markdown("""
+    <style>
+    [data-testid="stHeader"] {
+        display: none;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 if "openai_api_key" not in st.session_state:
     st.session_state["openai_api_key"] = ""
 if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 
-# เปลี่ยนชื่อแอปพลิเคชันตามต้องการ
 st.title("SEO Generator")
 st.caption("🚀 รองรับ พรีวิวรูปภาพ & พรีวิวเล่นวิดีโอ | เลือกสลับใช้ Gemini หรือ OpenAI API ได้ตามใจชอบ")
 
 with st.sidebar:
     st.header("🔑 ตั้งค่า Cloud Vision AI")
     
-    # เพิ่มปุ่มกดเลือกใช้ API Key ตัวที่ต้องการ
     api_choice = st.radio(
         "🎯 เลือก AI Engine ที่ต้องการใช้งาน:",
         ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"]
@@ -204,7 +211,6 @@ if uploaded_files:
     st.write("---")
 
     if st.button("🚀 เริ่มสร้าง CSV ทันที", use_container_width=True, type="primary"):
-        # ตรวจสอบ API Key ตามปุ่ม radio ที่ผู้ใช้เลือก
         if "Gemini" in api_choice and not gemini_api_key:
             st.error("❌ คุณเลือกใช้ Gemini API กรุณากรอก Gemini API Key ในแถบด้านซ้ายก่อน")
         elif "OpenAI" in api_choice and not openai_api_key:
@@ -215,7 +221,6 @@ if uploaded_files:
             for idx, file in enumerate(uploaded_files):
                 status_placeholders[file.name].info("🔄 ประมวลผล...")
                 try:
-                    # ทำงานตาม API ที่ผู้ใช้เลือกกด
                     if "Gemini" in api_choice:
                         if idx > 0: time.sleep(4.5)
                         t, k, c = process_with_gemini(file, gemini_api_key)
