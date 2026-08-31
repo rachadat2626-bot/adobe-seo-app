@@ -1,6 +1,6 @@
 streamlit
 pandas
 Pillow
-opencv-python-headless
+av
 google-generativeai
 openai
