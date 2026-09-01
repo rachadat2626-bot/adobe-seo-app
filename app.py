@@ -37,9 +37,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 1. ระบบจัดการ URL Params ป้องกัน Crash
-# ==========================================
 def get_param(key):
     try:
         if hasattr(st, "query_params"):
@@ -70,9 +67,6 @@ def clear_params():
     except Exception:
         pass
 
-# ==========================================
-# 2. ระบบฐานข้อมูล (เซฟข้อมูลผู้ใช้ + API Keys)
-# ==========================================
 DB_FILE = "users_db.json"
 
 def load_users():
@@ -101,9 +95,6 @@ except Exception:
 
 user_db = load_users()
 
-# ==========================================
-# 3. ตัวแปรความจำสำรอง (Session State)
-# ==========================================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "current_user" not in st.session_state:
@@ -138,9 +129,20 @@ if query_token and not st.session_state["logged_in"]:
                 st.session_state["openai_api_key"] = data.get("openai_api_key", "")
                 break
 
-# ==========================================
-# 4. หน้า Login & Register
-# ==========================================
+def make_fast_thumbnail(uploaded_file, max_size=150):
+    try:
+        uploaded_file.seek(0)
+        img = Image.open(uploaded_file).convert("RGB")
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=70, optimize=True)
+        buf.seek(0)
+        del img
+        gc.collect()
+        return buf
+    except Exception:
+        return None
+
 def login_and_register_screen():
     st.title("🔒 เข้าสู่ระบบ / สมัครสมาชิก")
     tab1, tab2 = st.tabs(["🔑 เข้าสู่ระบบ (Login)", "📝 สมัครสมาชิก (Register)"])
@@ -209,9 +211,6 @@ def login_and_register_screen():
                     save_users(user_db)
                     st.success("🎉 สมัครสมาชิกเรียบร้อยแล้ว! กรุณารอ Admin อนุมัติการใช้งาน")
 
-# ==========================================
-# 5. หน้า Dashboard สำหรับ Admin
-# ==========================================
 def admin_dashboard():
     st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
     st.caption("หน้าต่างนี้เห็นเฉพาะ Admin เท่านั้น")
@@ -250,9 +249,6 @@ def admin_dashboard():
                 st.rerun()
             st.divider()
 
-# ==========================================
-# 6. หน้าต่างแอปพลิเคชันหลัก
-# ==========================================
 def main_app():
     if st.session_state.get("is_admin", False):
         if "show_admin_panel" not in st.session_state:
@@ -413,7 +409,7 @@ def main_app():
 
         if is_svg:
             svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
-            svg_prompt = prompt + "\n\nThis is SVG vector illustration code/metadata:\n" + svg_text
+            svg_prompt = f"{prompt}\n\nThis is SVG vector illustration code/metadata:\n{svg_text}"
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
@@ -429,7 +425,7 @@ def main_app():
             eps_bytes = uploaded_file.read()
             eps_text = eps_bytes[:5000].decode('ascii', errors='ignore')
             clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
-            eps_prompt = prompt + "\n\nFilename: " + uploaded_file.name + "\nEPS Vector Metadata/Header:\n" + clean_eps_info
+            eps_prompt = f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Metadata/Header:\n{clean_eps_info}"
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
@@ -467,6 +463,7 @@ def main_app():
             if os.path.exists(tmp_path): os.remove(tmp_path)
 
         else:
+            # บีบอัดภาพเพื่อส่ง AI (ไม่เกิน 512px)
             img = Image.open(uploaded_file).convert("RGB")
             img.thumbnail((512, 512), Image.Resampling.LANCZOS)
             for m_name in models_to_try:
@@ -503,7 +500,7 @@ def main_app():
             svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt + "\n\nSVG Vector Code:\n" + svg_text}],
+                messages=[{"role": "user", "content": f"{prompt}\n\nSVG Vector Code:\n{svg_text}"}],
                 max_tokens=300
             )
             return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
@@ -514,7 +511,7 @@ def main_app():
             clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt + "\n\nFilename: " + uploaded_file.name + "\nEPS Vector Info:\n" + clean_eps_info}],
+                messages=[{"role": "user", "content": f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Info:\n{clean_eps_info}"}],
                 max_tokens=300
             )
             return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
@@ -561,16 +558,13 @@ def main_app():
                             ext = os.path.splitext(file.name)[1].lower()
                             file.seek(0)
                             if ext in ['.jpg', '.jpeg', '.png', '.webp']:
-                                try:
-                                    st.image(file, caption=f"[{idx}] {file.name[:12]}...")
-                                except Exception:
-                                    st.warning(f"[{idx}] 🖼️ {file.name[:12]}...")
+                                thumb_buf = make_fast_thumbnail(file, max_size=150)
+                                if thumb_buf:
+                                    st.image(thumb_buf, caption=f"[{idx}] {file.name[:12]}...")
+                                else:
+                                    st.info(f"🖼️ [{idx}] {file.name[:12]}...")
                             elif ext in ['.mp4', '.mov', '.avi', '.webm']:
-                                try:
-                                    st.video(file)
-                                    st.caption(f"[{idx}] 🎥 {file.name[:12]}...")
-                                except Exception:
-                                    st.info(f"🎥 Video\n[{idx}] {file.name[:12]}...")
+                                st.info(f"🎥 Video\n[{idx}] {file.name[:12]}...")
                             elif ext == '.svg':
                                 st.info(f"🎨 SVG Vector\n[{idx}] {file.name[:12]}...")
                             elif ext == '.eps':
@@ -609,7 +603,7 @@ def main_app():
                         if file.name in status_placeholders:
                             status_placeholders[file.name].error(f"❌ {e}")
                     bar.progress((idx + 1) / len(uploaded_files))
-                    gc.collect()
+                    gc.collect() # ล้างหน่วยความจำทันทีที่สร้างผลลัพธ์เสร็จทีละรูป
                 
                 if results:
                     st.session_state["generated_results"] = results
@@ -627,9 +621,6 @@ def main_app():
             key="btn_download_csv"
         )
 
-# ==========================================
-# 7. ตัวควบคุมการแสดงผล
-# ==========================================
 if not st.session_state["logged_in"]:
     login_and_register_screen()
 else:
