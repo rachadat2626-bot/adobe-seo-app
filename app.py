@@ -50,8 +50,11 @@ def load_users():
     return {}
 
 def save_users(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(db, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 try:
     ADMIN_USER = st.secrets.get("ADMIN_USER", "superadmin")
@@ -63,7 +66,7 @@ except Exception:
 user_db = load_users()
 
 # ==========================================
-# 2. ตัวแปรความจำสำรอง (Session State)
+# 2. ตัวแปรความจำสำรอง (Session State & Token)
 # ==========================================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -77,12 +80,16 @@ if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = 0
-
-# ตัวแปรสำหรับจดจำไฟล์ CSV เพื่อให้โหลดซ้ำได้โดยไม่หาย
 if "generated_results" not in st.session_state:
     st.session_state["generated_results"] = None
 
-query_token = st.query_params.get("session_token", None)
+query_token = None
+try:
+    if hasattr(st, "query_params"):
+        query_token = st.query_params.get("session_token", None)
+except Exception:
+    query_token = None
+
 if query_token and not st.session_state["logged_in"]:
     if query_token == f"admin_token_{ADMIN_PASS}":
         st.session_state["logged_in"] = True
@@ -117,7 +124,8 @@ def login_and_register_screen():
             if submit_login:
                 if username == ADMIN_USER and password == ADMIN_PASS:
                     token = f"admin_token_{ADMIN_PASS}"
-                    st.query_params["session_token"] = token
+                    try: st.query_params["session_token"] = token
+                    except: pass
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = username
                     st.session_state["is_admin"] = True
@@ -133,7 +141,8 @@ def login_and_register_screen():
                         user_db[username]["token"] = token
                         save_users(user_db)
                         
-                        st.query_params["session_token"] = token
+                        try: st.query_params["session_token"] = token
+                        except: pass
                         st.session_state["logged_in"] = True
                         st.session_state["current_user"] = username
                         st.session_state["is_admin"] = False
@@ -226,38 +235,45 @@ def main_app():
     st.title("SEO Generator")
     st.caption(f"🚀 ยินดีต้อนรับคุณ **{st.session_state['current_user']}**")
     
-    col1, col2, col3 = st.columns([6, 2, 2])
-    with col2:
-        if st.button("🔄 ทำรายการใหม่", use_container_width=True):
-            st.session_state["uploader_key"] += 1
-            st.session_state["generated_results"] = None  # เคลียร์ไฟล์ CSV เก่า
-            st.rerun()
-    with col3:
-        if st.session_state["is_admin"]:
-            if st.button("🛡️ หลังบ้าน Admin", use_container_width=True):
+    if st.session_state["is_admin"]:
+        col1, col2, col3, col4 = st.columns([4, 2, 2, 2])
+        with col2:
+            if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_admin"):
+                st.session_state["uploader_key"] += 1
+                st.session_state["generated_results"] = None
+                st.rerun()
+        with col3:
+            if st.button("🛡️ หลังบ้าน Admin", use_container_width=True, key="btn_admin"):
                 st.session_state["show_admin_panel"] = True
                 st.rerun()
-        else:
-            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+        with col4:
+            if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_admin"):
                 st.session_state["logged_in"] = False
                 st.session_state["current_user"] = ""
                 st.session_state["is_admin"] = False
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
-                st.query_params.clear()
+                try: st.query_params.clear()
+                except: pass
                 st.rerun()
-
-    if st.session_state["is_admin"]:
+    else:
+        col1, col2, col3 = st.columns([6, 2, 2])
+        with col2:
+            if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_user"):
+                st.session_state["uploader_key"] += 1
+                st.session_state["generated_results"] = None
+                st.rerun()
         with col3:
-            if st.button("🚪 ออกจากระบบ", use_container_width=True):
+            if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_user"):
                 st.session_state["logged_in"] = False
                 st.session_state["current_user"] = ""
                 st.session_state["is_admin"] = False
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
-                st.query_params.clear()
+                try: st.query_params.clear()
+                except: pass
                 st.rerun()
 
     with st.sidebar:
@@ -483,9 +499,8 @@ def main_app():
                     bar.progress((idx + 1) / len(uploaded_files))
                 
                 if results:
-                    st.session_state["generated_results"] = results # เซฟผลลัพธ์ลงความจำ
+                    st.session_state["generated_results"] = results
 
-    # โชว์ปุ่มดาวน์โหลดค้างไว้เสมอ หากมีข้อมูลในความจำ
     if st.session_state.get("generated_results"):
         st.success("🎉 เสร็จสมบูรณ์! พร้อมดาวน์โหลดไฟล์ CSV")
         df = pd.DataFrame(st.session_state["generated_results"])
