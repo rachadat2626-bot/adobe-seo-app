@@ -10,6 +10,7 @@ import tempfile
 import os
 import json
 import uuid
+import gc
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -270,6 +271,7 @@ def main_app():
             if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_adm"):
                 st.session_state["uploader_key"] += 1
                 st.session_state["generated_results"] = None
+                gc.collect()
                 st.rerun()
         with col3:
             if st.button("🛡️ หลังบ้าน Admin", use_container_width=True, key="btn_adm_panel"):
@@ -284,6 +286,7 @@ def main_app():
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
                 clear_params()
+                gc.collect()
                 st.rerun()
     else:
         col1, col2, col3 = st.columns([6, 2, 2])
@@ -291,6 +294,7 @@ def main_app():
             if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_usr"):
                 st.session_state["uploader_key"] += 1
                 st.session_state["generated_results"] = None
+                gc.collect()
                 st.rerun()
         with col3:
             if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_usr"):
@@ -301,6 +305,7 @@ def main_app():
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
                 clear_params()
+                gc.collect()
                 st.rerun()
 
     with st.sidebar:
@@ -347,25 +352,10 @@ def main_app():
         s = re.sub(r"[^A-Za-z0-9 ]+", " ", s)
         return re.sub(r"\s+", " ", s).strip()
 
-    def make_square_image(img, target_size=512):
-        w, h = img.size
-        if w == h: return img.resize((target_size, target_size), Image.Resampling.LANCZOS)
-        ratio = min(target_size / w, target_size / h)
-        new_w, new_h = int(w * ratio), int(h * ratio)
-        resized_img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        square_img = Image.new("RGB", (target_size, target_size), (255, 255, 255))
-        square_img.paste(resized_img, ((target_size - new_w) // 2, (target_size - new_h) // 2))
-        return square_img
-
-    def encode_image_to_base64(pil_img):
-        buffered = BytesIO()
-        pil_img.save(buffered, format="JPEG")
-        return base64.b64encode(buffered.getvalue()).decode('utf-8')
-
-    def parse_ai_response(text, is_video=False):
+    def parse_ai_response(text, is_video=False, is_vector=False):
         title_match = re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE)
         kw_match = re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE)
-        lines = text.splitlines()
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
         first_line = lines[0] if lines else ""
         last_line = lines[-1] if lines else ""
         raw_title = title_match.group(1).strip() if title_match else first_line.replace('TITLE:', '').strip()
@@ -379,7 +369,14 @@ def main_app():
             if len(kw_list) >= 50: break
             if f not in kw_list: kw_list.append(f)
         keywords_str = ", ".join(kw_list[:50])
-        category = "Videos" if is_video else "Illustrations/Clip Art"
+        
+        if is_video:
+            category = "Videos"
+        elif is_vector:
+            category = "Vectors"
+        else:
+            category = "Illustrations/Clip Art"
+            
         return title, keywords_str, category
 
     def get_available_gemini_models(api_key):
@@ -404,14 +401,47 @@ def main_app():
         models_to_try = get_available_gemini_models(api_key)
         prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
         
-        is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
-        uploaded_file.seek(0)
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        is_video = ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+        is_svg = ext == '.svg'
+        is_eps = ext == '.eps'
+        is_vector = is_svg or is_eps
         
+        uploaded_file.seek(0)
         response_text = None
         last_err = None
 
-        if is_video:
-            ext = os.path.splitext(uploaded_file.name)[1]
+        if is_svg:
+            svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
+            svg_prompt = f"{prompt}\n\nThis is SVG vector illustration code/metadata:\n{svg_text}"
+            for m_name in models_to_try:
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    res = model.generate_content(svg_prompt)
+                    if res and res.text:
+                        response_text = res.text
+                        break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+        elif is_eps:
+            eps_bytes = uploaded_file.read()
+            eps_text = eps_bytes[:5000].decode('ascii', errors='ignore')
+            clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
+            eps_prompt = f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Metadata/Header:\n{clean_eps_info}"
+            for m_name in models_to_try:
+                try:
+                    model = genai.GenerativeModel(m_name)
+                    res = model.generate_content(eps_prompt)
+                    if res and res.text:
+                        response_text = res.text
+                        break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+        elif is_video:
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                 tmp.write(uploaded_file.getbuffer())
                 tmp_path = tmp.name
@@ -435,44 +465,83 @@ def main_app():
             try: genai.delete_file(g_file.name)
             except Exception: pass
             if os.path.exists(tmp_path): os.remove(tmp_path)
+
         else:
             img = Image.open(uploaded_file).convert("RGB")
-            square_img = make_square_image(img, 512)
+            img.thumbnail((512, 512), Image.Resampling.LANCZOS)
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
-                    res = model.generate_content([prompt, square_img])
+                    res = model.generate_content([prompt, img])
                     if res and res.text:
                         response_text = res.text
                         break
                 except Exception as e:
                     last_err = e
                     continue
+            del img
+            gc.collect()
 
         if not response_text:
             raise Exception(f"Gemini API Error: {last_err if last_err else 'No response'}")
             
-        return parse_ai_response(response_text, is_video)
+        return parse_ai_response(response_text, is_video, is_vector)
 
     def process_with_openai(uploaded_file, api_key):
         client = OpenAI(api_key=api_key)
         prompt = "TITLE: Describe main visual details precisely (no commas, 180-195 chars). KEYWORDS: 50 highly relevant commercial English keywords separated by commas."
-        is_video = uploaded_file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
+        
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        is_video = ext in ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+        is_svg = ext == '.svg'
+        is_eps = ext == '.eps'
+        is_vector = is_svg or is_eps
+        
         uploaded_file.seek(0)
-        img = Image.open(uploaded_file).convert("RGB") if not is_video else Image.new("RGB", (512, 512), (200, 200, 200))
-        square_img = make_square_image(img, 512)
-        base64_img = encode_image_to_base64(square_img)
+
+        if is_svg:
+            svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": f"{prompt}\n\nSVG Vector Code:\n{svg_text}"}],
+                max_tokens=300
+            )
+            return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
+
+        elif is_eps:
+            eps_bytes = uploaded_file.read()
+            eps_text = eps_bytes[:5000].decode('ascii', errors='ignore')
+            clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Info:\n{clean_eps_info}"}],
+                max_tokens=300
+            )
+            return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
+
+        elif is_video:
+            img = Image.new("RGB", (512, 512), (200, 200, 200))
+        else:
+            img = Image.open(uploaded_file).convert("RGB")
+            img.thumbnail((512, 512), Image.Resampling.LANCZOS)
+
+        buffered = BytesIO()
+        img.save(buffered, format="JPEG", quality=80)
+        base64_img = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        del img
+        gc.collect()
+
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
             max_tokens=300
         )
-        return parse_ai_response(res.choices[0].message.content, is_video)
+        return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
 
-    st.write("รองรับ: **JPG, JPEG, PNG, MP4, MOV** (สูงสุด 100 ไฟล์ต่อรอบ)")
+    st.write("รองรับ: **JPG, PNG, WEBP, MP4, MOV, SVG, EPS** (สูงสุด 100 ไฟล์ต่อรอบ)")
     uploaded_files = st.file_uploader(
         "ลากไฟล์มาวางที่นี่", 
-        type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi", "webm"], 
+        type=["jpg", "jpeg", "png", "webp", "mp4", "mov", "avi", "webm", "svg", "eps"], 
         accept_multiple_files=True,
         key=f"uploader_{st.session_state['uploader_key']}"
     )
@@ -481,28 +550,33 @@ def main_app():
         st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
         status_placeholders = {}
         
-        # ปรับปรุงให้โชว์ Preview โดยส่งไฟล์ตรงไปยัง st.image เพื่อไม่กิน RAM
         try:
-            with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=True):
+            with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=False):
                 cols_per_row = 5
                 for i in range(0, len(uploaded_files), cols_per_row):
                     cols = st.columns(cols_per_row)
                     for j, file in enumerate(uploaded_files[i:i+cols_per_row]):
                         idx = i + j + 1
                         with cols[j]:
-                            is_vid = file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
+                            ext = os.path.splitext(file.name)[1].lower()
                             file.seek(0)
-                            if not is_vid:
+                            if ext in ['.jpg', '.jpeg', '.png', '.webp']:
                                 try:
                                     st.image(file, caption=f"[{idx}] {file.name[:12]}...")
                                 except Exception:
                                     st.warning(f"[{idx}] 🖼️ {file.name[:12]}...")
-                            else:
+                            elif ext in ['.mp4', '.mov', '.avi', '.webm']:
                                 try:
                                     st.video(file)
                                     st.caption(f"[{idx}] 🎥 {file.name[:12]}...")
                                 except Exception:
-                                    st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
+                                    st.info(f"🎥 Video\n[{idx}] {file.name[:12]}...")
+                            elif ext == '.svg':
+                                st.info(f"🎨 SVG Vector\n[{idx}] {file.name[:12]}...")
+                            elif ext == '.eps':
+                                st.info(f"📐 EPS Vector\n[{idx}] {file.name[:12]}...")
+                            else:
+                                st.info(f"📄 File\n[{idx}] {file.name[:12]}...")
                             status_placeholders[file.name] = st.empty()
                             status_placeholders[file.name].caption("⏳ รอประมวลผล")
         except Exception:
@@ -535,6 +609,7 @@ def main_app():
                         if file.name in status_placeholders:
                             status_placeholders[file.name].error(f"❌ {e}")
                     bar.progress((idx + 1) / len(uploaded_files))
+                    gc.collect()
                 
                 if results:
                     st.session_state["generated_results"] = results
