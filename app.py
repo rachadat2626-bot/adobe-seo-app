@@ -38,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. ระบบจัดการ URL Params ป้องกัน Crash ทุกเวอร์ชัน
+# 1. ระบบจัดการ URL Params ป้องกัน Crash
 # ==========================================
 def get_param(key):
     try:
@@ -413,7 +413,7 @@ def main_app():
 
         if is_svg:
             svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
-            svg_prompt = f"{prompt}\n\nThis is SVG vector illustration code/metadata:\n{svg_text}"
+            svg_prompt = prompt + "\n\nThis is SVG vector illustration code/metadata:\n" + svg_text
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
@@ -429,7 +429,7 @@ def main_app():
             eps_bytes = uploaded_file.read()
             eps_text = eps_bytes[:5000].decode('ascii', errors='ignore')
             clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
-            eps_prompt = f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Metadata/Header:\n{clean_eps_info}"
+            eps_prompt = prompt + "\n\nFilename: " + uploaded_file.name + "\nEPS Vector Metadata/Header:\n" + clean_eps_info
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
@@ -503,7 +503,7 @@ def main_app():
             svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"{prompt}\n\nSVG Vector Code:\n{svg_text}"}],
+                messages=[{"role": "user", "content": prompt + "\n\nSVG Vector Code:\n" + svg_text}],
                 max_tokens=300
             )
             return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
@@ -514,7 +514,7 @@ def main_app():
             clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Info:\n{clean_eps_info}"}],
+                messages=[{"role": "user", "content": prompt + "\n\nFilename: " + uploaded_file.name + "\nEPS Vector Info:\n" + clean_eps_info}],
                 max_tokens=300
             )
             return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
