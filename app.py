@@ -27,6 +27,7 @@ except ImportError:
 
 st.set_page_config(page_title="SEO Generator", layout="wide")
 
+# ซ่อน UI ของ Streamlit ทั้งหมด
 st.markdown("""
     <style>
     [data-testid="stHeader"] { display: none; }
@@ -56,6 +57,7 @@ def save_users(db):
     except Exception:
         pass
 
+# กำหนดรหัส Admin เริ่มต้น (superadmin / gappy789)
 try:
     ADMIN_USER = st.secrets.get("ADMIN_USER", "superadmin")
     ADMIN_PASS = st.secrets.get("ADMIN_PASS", "gappy789")
@@ -66,7 +68,32 @@ except Exception:
 user_db = load_users()
 
 # ==========================================
-# 2. ตัวแปรความจำสำรอง (Session State & Token)
+# 2. ตัวช่วยจัดการ URL Token (ป้องกันแอปพัง)
+# ==========================================
+def get_session_token():
+    try:
+        if hasattr(st, "query_params"):
+            return st.query_params.get("session_token", None)
+    except Exception:
+        pass
+    return None
+
+def set_session_token(token):
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params["session_token"] = token
+    except Exception:
+        pass
+
+def clear_session_token():
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params.clear()
+    except Exception:
+        pass
+
+# ==========================================
+# 3. ตัวแปรความจำสำรอง (Session State)
 # ==========================================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -83,13 +110,7 @@ if "uploader_key" not in st.session_state:
 if "generated_results" not in st.session_state:
     st.session_state["generated_results"] = None
 
-query_token = None
-try:
-    if hasattr(st, "query_params"):
-        query_token = st.query_params.get("session_token", None)
-except Exception:
-    query_token = None
-
+query_token = get_session_token()
 if query_token and not st.session_state["logged_in"]:
     if query_token == f"admin_token_{ADMIN_PASS}":
         st.session_state["logged_in"] = True
@@ -109,7 +130,7 @@ if query_token and not st.session_state["logged_in"]:
                 break
 
 # ==========================================
-# 3. หน้า Login & Register
+# 4. หน้า Login & Register
 # ==========================================
 def login_and_register_screen():
     st.title("🔒 เข้าสู่ระบบ / สมัครสมาชิก")
@@ -124,8 +145,7 @@ def login_and_register_screen():
             if submit_login:
                 if username == ADMIN_USER and password == ADMIN_PASS:
                     token = f"admin_token_{ADMIN_PASS}"
-                    try: st.query_params["session_token"] = token
-                    except: pass
+                    set_session_token(token)
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = username
                     st.session_state["is_admin"] = True
@@ -135,14 +155,13 @@ def login_and_register_screen():
                     st.success("✅ เข้าสู่ระบบสำเร็จ (Admin)")
                     time.sleep(0.5)
                     st.rerun()
-                elif username in user_db and user_db[username]["password"] == password:
-                    if user_db[username]["status"] == "Approved":
+                elif username in user_db and user_db[username].get("password") == password:
+                    if user_db[username].get("status") == "Approved":
                         token = str(uuid.uuid4())
                         user_db[username]["token"] = token
                         save_users(user_db)
                         
-                        try: st.query_params["session_token"] = token
-                        except: pass
+                        set_session_token(token)
                         st.session_state["logged_in"] = True
                         st.session_state["current_user"] = username
                         st.session_state["is_admin"] = False
@@ -182,13 +201,13 @@ def login_and_register_screen():
                     st.success("🎉 สมัครสมาชิกเรียบร้อยแล้ว! กรุณารอ Admin อนุมัติการใช้งาน")
 
 # ==========================================
-# 4. หน้าต่าง Admin Dashboard
+# 5. หน้าต่าง Admin Dashboard
 # ==========================================
 def admin_dashboard():
     st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
     st.caption("หน้าต่างนี้เห็นเฉพาะ Admin เท่านั้น")
     
-    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)"):
+    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)", key="btn_back_to_app"):
         st.session_state["show_admin_panel"] = False
         st.rerun()
         
@@ -201,9 +220,9 @@ def admin_dashboard():
         for user, data in list(user_db.items()):
             col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
             col1.write(f"**{user}**")
-            col2.write(f"สถานะ: `{data['status']}`")
+            col2.write(f"สถานะ: `{data.get('status', 'Pending')}`")
             
-            if data["status"] == "Pending":
+            if data.get("status") == "Pending":
                 if col3.button("✅ อนุมัติ", key=f"app_{user}"):
                     user_db[user]["status"] = "Approved"
                     save_users(user_db)
@@ -221,10 +240,10 @@ def admin_dashboard():
             st.divider()
 
 # ==========================================
-# 5. หน้าต่างแอปพลิเคชันหลัก
+# 6. หน้าต่างแอปพลิเคชันหลัก
 # ==========================================
 def main_app():
-    if st.session_state["is_admin"]:
+    if st.session_state.get("is_admin", False):
         if "show_admin_panel" not in st.session_state:
             st.session_state["show_admin_panel"] = False
             
@@ -233,9 +252,9 @@ def main_app():
             return
             
     st.title("SEO Generator")
-    st.caption(f"🚀 ยินดีต้อนรับคุณ **{st.session_state['current_user']}**")
+    st.caption(f"🚀 ยินดีต้อนรับคุณ **{st.session_state.get('current_user', '')}**")
     
-    if st.session_state["is_admin"]:
+    if st.session_state.get("is_admin", False):
         col1, col2, col3, col4 = st.columns([4, 2, 2, 2])
         with col2:
             if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_admin"):
@@ -254,8 +273,7 @@ def main_app():
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
-                try: st.query_params.clear()
-                except: pass
+                clear_session_token()
                 st.rerun()
     else:
         col1, col2, col3 = st.columns([6, 2, 2])
@@ -272,8 +290,7 @@ def main_app():
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
-                try: st.query_params.clear()
-                except: pass
+                clear_session_token()
                 st.rerun()
 
     with st.sidebar:
@@ -283,7 +300,7 @@ def main_app():
         input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
         input_gemini = st.text_input("Gemini API Key:", value=st.session_state["gemini_api_key"], type="password")
         
-        if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary"):
+        if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary", key="btn_save_keys"):
             st.session_state["openai_api_key"] = input_openai.strip()
             st.session_state["gemini_api_key"] = input_gemini.strip()
             
@@ -338,8 +355,11 @@ def main_app():
     def parse_ai_response(text, is_video=False):
         title_match = re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE)
         kw_match = re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE)
-        raw_title = title_match.group(1).strip() if title_match else text.split('\n')[0].replace('TITLE:', '').strip()
-        raw_kw = kw_match.group(1).strip() if kw_match else text.split('\n')[-1].replace('KEYWORDS:', '').strip()
+        lines = text.splitlines()
+        first_line = lines[0] if lines else ""
+        last_line = lines[-1] if lines else ""
+        raw_title = title_match.group(1).strip() if title_match else first_line.replace('TITLE:', '').strip()
+        raw_kw = kw_match.group(1).strip() if kw_match else last_line.replace('KEYWORDS:', '').strip()
         title = clean_title_ascii(raw_title)[:195]
         if len(title) < 180:
             title = (title + " for commercial marketing visual storytelling and creative content design projects asset")[:195]
@@ -353,6 +373,8 @@ def main_app():
         return title, keywords_str, category
 
     def get_available_gemini_models(api_key):
+        if not HAS_GEMINI:
+            return ["gemini-1.5-flash"]
         genai.configure(api_key=api_key)
         try:
             valid_models = []
@@ -364,9 +386,9 @@ def main_app():
             flash_models = [m for m in valid_models if 'flash' in m.lower()]
             other_models = [m for m in valid_models if 'flash' not in m.lower()]
             result = flash_models + other_models
-            return result if result else ["gemini-1.5-flash", "gemini-2.5-flash"]
+            return result if result else ["gemini-1.5-flash", "gemini-2.0-flash"]
         except Exception:
-            return ["gemini-1.5-flash", "gemini-2.5-flash"]
+            return ["gemini-1.5-flash", "gemini-2.0-flash"]
 
     def process_with_gemini(uploaded_file, api_key):
         models_to_try = get_available_gemini_models(api_key)
@@ -475,7 +497,7 @@ def main_app():
 
         st.write("---")
 
-        if st.button("🚀 เริ่มสร้าง CSV ทันที", use_container_width=True, type="primary"):
+        if st.button("🚀 เริ่มสร้าง CSV ทันที", use_container_width=True, type="primary", key="btn_run_process"):
             if "Gemini" in api_choice and not gemini_api_key:
                 st.error("❌ คุณเลือกใช้ Gemini API กรุณากรอก Gemini API Key ในแถบด้านซ้ายก่อน")
             elif "OpenAI" in api_choice and not openai_api_key:
@@ -510,11 +532,12 @@ def main_app():
             data=df.to_csv(index=False, encoding="utf-8-sig"), 
             file_name="adobe_stock_seo.csv", 
             mime="text/csv", 
-            type="primary"
+            type="primary",
+            key="btn_download_csv"
         )
 
 # ==========================================
-# 6. ตัวควบคุมการแสดงผล
+# 7. ตัวควบคุมการแสดงผล
 # ==========================================
 if not st.session_state["logged_in"]:
     login_and_register_screen()
