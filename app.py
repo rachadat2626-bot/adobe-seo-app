@@ -27,6 +27,7 @@ except Exception:
 
 st.set_page_config(page_title="SEO Generator", layout="wide")
 
+# ซ่อน UI ของ Streamlit ทั้งหมด
 st.markdown("""
     <style>
     [data-testid="stHeader"] { display: none; }
@@ -77,7 +78,8 @@ def load_users():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
         except Exception:
             return {}
     return {}
@@ -122,7 +124,7 @@ if query_token and not st.session_state["logged_in"]:
         st.session_state["logged_in"] = True
         st.session_state["current_user"] = ADMIN_USER
         st.session_state["is_admin"] = True
-        if ADMIN_USER in user_db:
+        if ADMIN_USER in user_db and isinstance(user_db[ADMIN_USER], dict):
             st.session_state["gemini_api_key"] = user_db[ADMIN_USER].get("gemini_api_key", "")
             st.session_state["openai_api_key"] = user_db[ADMIN_USER].get("openai_api_key", "")
     else:
@@ -155,7 +157,7 @@ def login_and_register_screen():
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = username
                     st.session_state["is_admin"] = True
-                    if username in user_db:
+                    if username in user_db and isinstance(user_db[username], dict):
                         st.session_state["gemini_api_key"] = user_db[username].get("gemini_api_key", "")
                         st.session_state["openai_api_key"] = user_db[username].get("openai_api_key", "")
                     st.success("✅ เข้าสู่ระบบสำเร็จ (Admin)")
@@ -207,13 +209,13 @@ def login_and_register_screen():
                     st.success("🎉 สมัครสมาชิกเรียบร้อยแล้ว! กรุณารอ Admin อนุมัติการใช้งาน")
 
 # ==========================================
-# 5. หน้าต่าง Admin Dashboard
+# 5. หน้า Dashboard สำหรับ Admin
 # ==========================================
 def admin_dashboard():
     st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
     st.caption("หน้าต่างนี้เห็นเฉพาะ Admin เท่านั้น")
     
-    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)", key="btn_back_app"):
+    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)", key="btn_back_app_admin"):
         st.session_state["show_admin_panel"] = False
         st.rerun()
         
@@ -478,30 +480,33 @@ def main_app():
     if uploaded_files:
         st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
         status_placeholders = {}
-        with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=True):
-            cols_per_row = 5
-            for i in range(0, len(uploaded_files), cols_per_row):
-                cols = st.columns(cols_per_row)
-                for j, file in enumerate(uploaded_files[i:i+cols_per_row]):
-                    idx = i + j + 1
-                    with cols[j]:
-                        is_vid = file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
-                        file.seek(0)
-                        if not is_vid:
-                            try:
-                                preview_img = Image.open(file)
-                                preview_img.thumbnail((300, 300))
-                                st.image(preview_img, caption=f"[{idx}] {file.name[:12]}...", use_container_width=True)
-                            except Exception:
-                                st.warning(f"[{idx}] 🖼️ {file.name[:12]}...")
-                        else:
-                            try:
-                                st.video(file)
-                                st.caption(f"[{idx}] 🎥 {file.name[:12]}...")
-                            except Exception:
-                                st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
-                        status_placeholders[file.name] = st.empty()
-                        status_placeholders[file.name].caption("⏳ รอประมวลผล")
+        
+        # ปรับปรุงให้โชว์ Preview โดยส่งไฟล์ตรงไปยัง st.image เพื่อไม่กิน RAM
+        try:
+            with st.expander("🖼️ ตัวอย่างไฟล์ที่อัปโหลด (Preview Gallery)", expanded=True):
+                cols_per_row = 5
+                for i in range(0, len(uploaded_files), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    for j, file in enumerate(uploaded_files[i:i+cols_per_row]):
+                        idx = i + j + 1
+                        with cols[j]:
+                            is_vid = file.name.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm'))
+                            file.seek(0)
+                            if not is_vid:
+                                try:
+                                    st.image(file, caption=f"[{idx}] {file.name[:12]}...")
+                                except Exception:
+                                    st.warning(f"[{idx}] 🖼️ {file.name[:12]}...")
+                            else:
+                                try:
+                                    st.video(file)
+                                    st.caption(f"[{idx}] 🎥 {file.name[:12]}...")
+                                except Exception:
+                                    st.info(f"🎥 Video\n\n[{idx}] {file.name[:12]}...")
+                            status_placeholders[file.name] = st.empty()
+                            status_placeholders[file.name].caption("⏳ รอประมวลผล")
+        except Exception:
+            st.warning("⚠️ โหลดพรีวิวรูปภาพไม่สมบูรณ์ แต่ยังสามารถกดประมวลผลต่อได้ครับ")
 
         st.write("---")
 
@@ -514,7 +519,8 @@ def main_app():
                 results = []
                 bar = st.progress(0)
                 for idx, file in enumerate(uploaded_files):
-                    status_placeholders[file.name].info("🔄 ประมวลผล...")
+                    if file.name in status_placeholders:
+                        status_placeholders[file.name].info("🔄 ประมวลผล...")
                     try:
                         if "Gemini" in api_choice:
                             if idx > 0: time.sleep(4.5)
@@ -522,10 +528,12 @@ def main_app():
                         else:
                             if idx > 0: time.sleep(0.5)
                             t, k, c = process_with_openai(file, openai_api_key)
-                        status_placeholders[file.name].success("✅ สำเร็จ")
+                        if file.name in status_placeholders:
+                            status_placeholders[file.name].success("✅ สำเร็จ")
                         results.append({"Filename": file.name, "Title": t, "Keywords": k, "Category": c, "Release Info": "", "Editorial": "No"})
                     except Exception as e:
-                        status_placeholders[file.name].error(f"❌ {e}")
+                        if file.name in status_placeholders:
+                            status_placeholders[file.name].error(f"❌ {e}")
                     bar.progress((idx + 1) / len(uploaded_files))
                 
                 if results:
