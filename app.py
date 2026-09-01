@@ -1,4 +1,17 @@
 import streamlit as st
+
+# 1. ต้องเป็นคำสั่ง Streamlit แรกสุดเสมอ
+st.set_page_config(page_title="SEO Generator", layout="wide")
+
+# ซ่อน UI Streamlit
+st.markdown("""
+    <style>
+    [data-testid="stHeader"] { display: none; }
+    footer { visibility: hidden; }
+    .viewerBadge_container__1QSob, .viewerBadge_link__1S137 { display: none !important; }
+    </style>
+""", unsafe_allow_html=True)
+
 import pandas as pd
 from PIL import Image
 import re
@@ -12,18 +25,9 @@ import json
 import uuid
 import gc
 
-st.set_page_config(page_title="SEO Generator", layout="wide")
-
-st.markdown("""
-    <style>
-    [data-testid="stHeader"] { display: none; }
-    footer { visibility: hidden; }
-    .viewerBadge_container__1QSob, .viewerBadge_link__1S137 { display: none !important; }
-    </style>
-""", unsafe_allow_html=True)
-
 Image.MAX_IMAGE_PIXELS = None
 
+# โหลด AI SDK แบบปลอดภัย
 try:
     import google.generativeai as genai
     HAS_GEMINI = True
@@ -36,6 +40,9 @@ try:
 except Exception:
     HAS_OPENAI = False
 
+# ------------------------------------------
+# ระบบฐานข้อมูลแบบเซฟตี้
+# ------------------------------------------
 DB_FILE = "users_db.json"
 
 def safe_load_users():
@@ -67,6 +74,9 @@ if "global_user_db" not in st.session_state:
 
 user_db = st.session_state["global_user_db"]
 
+# ------------------------------------------
+# Session State Setup
+# ------------------------------------------
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "current_user" not in st.session_state:
@@ -82,6 +92,9 @@ if "uploader_key" not in st.session_state:
 if "generated_results" not in st.session_state:
     st.session_state["generated_results"] = None
 
+# ------------------------------------------
+# หน้า Login / Register
+# ------------------------------------------
 def login_and_register_screen():
     st.title("🔒 เข้าสู่ระบบ / สมัครสมาชิก")
     tab1, tab2 = st.tabs(["🔑 เข้าสู่ระบบ (Login)", "📝 สมัครสมาชิก (Register)"])
@@ -142,6 +155,9 @@ def login_and_register_screen():
                     safe_save_users(user_db)
                     st.success("🎉 สมัครสมาชิกเรียบร้อยแล้ว! กรุณารอ Admin อนุมัติการใช้งาน")
 
+# ------------------------------------------
+# หน้า Admin Dashboard
+# ------------------------------------------
 def admin_dashboard():
     st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
     st.caption("หน้าต่างนี้เห็นเฉพาะ Admin เท่านั้น")
@@ -180,6 +196,9 @@ def admin_dashboard():
                 st.rerun()
             st.divider()
 
+# ------------------------------------------
+# หน้าแอปหลัก
+# ------------------------------------------
 def main_app():
     if st.session_state.get("is_admin", False):
         if "show_admin_panel" not in st.session_state:
@@ -466,7 +485,6 @@ def main_app():
         st.write(f"📁 **พร้อมประมวลผล:** {len(uploaded_files)} ไฟล์")
         status_placeholders = {}
         
-        # แสดงผลเป็นข้อความแทนการโหลดพรีวิวภาพลง RAM
         with st.expander("📋 รายชื่อไฟล์ที่เตรียมประมวลผล", expanded=True):
             for idx, file in enumerate(uploaded_files):
                 col_name, col_status = st.columns([7, 3])
