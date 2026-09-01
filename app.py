@@ -16,18 +16,17 @@ Image.MAX_IMAGE_PIXELS = None
 try:
     import google.generativeai as genai
     HAS_GEMINI = True
-except ImportError:
+except Exception:
     HAS_GEMINI = False
 
 try:
     from openai import OpenAI
     HAS_OPENAI = True
-except ImportError:
+except Exception:
     HAS_OPENAI = False
 
 st.set_page_config(page_title="SEO Generator", layout="wide")
 
-# ซ่อน UI ของ Streamlit ทั้งหมด
 st.markdown("""
     <style>
     [data-testid="stHeader"] { display: none; }
@@ -37,7 +36,40 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. ระบบฐานข้อมูล (เซฟข้อมูลผู้ใช้ + API Keys)
+# 1. ระบบจัดการ URL Params ป้องกัน Crash ทุกเวอร์ชัน
+# ==========================================
+def get_param(key):
+    try:
+        if hasattr(st, "query_params"):
+            return st.query_params.get(key, None)
+        elif hasattr(st, "experimental_get_query_params"):
+            params = st.experimental_get_query_params()
+            res = params.get(key, None)
+            return res[0] if res else None
+    except Exception:
+        pass
+    return None
+
+def set_param(key, val):
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params[key] = val
+        elif hasattr(st, "experimental_set_query_params"):
+            st.experimental_set_query_params(**{key: val})
+    except Exception:
+        pass
+
+def clear_params():
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params.clear()
+        elif hasattr(st, "experimental_set_query_params"):
+            st.experimental_set_query_params()
+    except Exception:
+        pass
+
+# ==========================================
+# 2. ระบบฐานข้อมูล (เซฟข้อมูลผู้ใช้ + API Keys)
 # ==========================================
 DB_FILE = "users_db.json"
 
@@ -57,7 +89,6 @@ def save_users(db):
     except Exception:
         pass
 
-# กำหนดรหัส Admin เริ่มต้น (superadmin / gappy789)
 try:
     ADMIN_USER = st.secrets.get("ADMIN_USER", "superadmin")
     ADMIN_PASS = st.secrets.get("ADMIN_PASS", "gappy789")
@@ -66,31 +97,6 @@ except Exception:
     ADMIN_PASS = "gappy789"
 
 user_db = load_users()
-
-# ==========================================
-# 2. ตัวช่วยจัดการ URL Token (ป้องกันแอปพัง)
-# ==========================================
-def get_session_token():
-    try:
-        if hasattr(st, "query_params"):
-            return st.query_params.get("session_token", None)
-    except Exception:
-        pass
-    return None
-
-def set_session_token(token):
-    try:
-        if hasattr(st, "query_params"):
-            st.query_params["session_token"] = token
-    except Exception:
-        pass
-
-def clear_session_token():
-    try:
-        if hasattr(st, "query_params"):
-            st.query_params.clear()
-    except Exception:
-        pass
 
 # ==========================================
 # 3. ตัวแปรความจำสำรอง (Session State)
@@ -110,7 +116,7 @@ if "uploader_key" not in st.session_state:
 if "generated_results" not in st.session_state:
     st.session_state["generated_results"] = None
 
-query_token = get_session_token()
+query_token = get_param("session_token")
 if query_token and not st.session_state["logged_in"]:
     if query_token == f"admin_token_{ADMIN_PASS}":
         st.session_state["logged_in"] = True
@@ -121,7 +127,7 @@ if query_token and not st.session_state["logged_in"]:
             st.session_state["openai_api_key"] = user_db[ADMIN_USER].get("openai_api_key", "")
     else:
         for u, data in user_db.items():
-            if data.get("token") == query_token and data.get("status") == "Approved":
+            if isinstance(data, dict) and data.get("token") == query_token and data.get("status") == "Approved":
                 st.session_state["logged_in"] = True
                 st.session_state["current_user"] = u
                 st.session_state["is_admin"] = False
@@ -145,7 +151,7 @@ def login_and_register_screen():
             if submit_login:
                 if username == ADMIN_USER and password == ADMIN_PASS:
                     token = f"admin_token_{ADMIN_PASS}"
-                    set_session_token(token)
+                    set_param("session_token", token)
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = username
                     st.session_state["is_admin"] = True
@@ -155,13 +161,13 @@ def login_and_register_screen():
                     st.success("✅ เข้าสู่ระบบสำเร็จ (Admin)")
                     time.sleep(0.5)
                     st.rerun()
-                elif username in user_db and user_db[username].get("password") == password:
+                elif username in user_db and isinstance(user_db[username], dict) and user_db[username].get("password") == password:
                     if user_db[username].get("status") == "Approved":
                         token = str(uuid.uuid4())
                         user_db[username]["token"] = token
                         save_users(user_db)
                         
-                        set_session_token(token)
+                        set_param("session_token", token)
                         st.session_state["logged_in"] = True
                         st.session_state["current_user"] = username
                         st.session_state["is_admin"] = False
@@ -207,7 +213,7 @@ def admin_dashboard():
     st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
     st.caption("หน้าต่างนี้เห็นเฉพาะ Admin เท่านั้น")
     
-    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)", key="btn_back_to_app"):
+    if st.button("⬅️ กลับไปหน้าแอปใช้งาน (SEO Generator)", key="btn_back_app"):
         st.session_state["show_admin_panel"] = False
         st.rerun()
         
@@ -218,6 +224,8 @@ def admin_dashboard():
         st.info("ยังไม่มีผู้ใช้งานสมัครเข้ามาในระบบ")
     else:
         for user, data in list(user_db.items()):
+            if not isinstance(data, dict):
+                continue
             col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
             col1.write(f"**{user}**")
             col2.write(f"สถานะ: `{data.get('status', 'Pending')}`")
@@ -257,40 +265,40 @@ def main_app():
     if st.session_state.get("is_admin", False):
         col1, col2, col3, col4 = st.columns([4, 2, 2, 2])
         with col2:
-            if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_admin"):
+            if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_adm"):
                 st.session_state["uploader_key"] += 1
                 st.session_state["generated_results"] = None
                 st.rerun()
         with col3:
-            if st.button("🛡️ หลังบ้าน Admin", use_container_width=True, key="btn_admin"):
+            if st.button("🛡️ หลังบ้าน Admin", use_container_width=True, key="btn_adm_panel"):
                 st.session_state["show_admin_panel"] = True
                 st.rerun()
         with col4:
-            if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_admin"):
+            if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_adm"):
                 st.session_state["logged_in"] = False
                 st.session_state["current_user"] = ""
                 st.session_state["is_admin"] = False
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
-                clear_session_token()
+                clear_params()
                 st.rerun()
     else:
         col1, col2, col3 = st.columns([6, 2, 2])
         with col2:
-            if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_user"):
+            if st.button("🔄 ทำรายการใหม่", use_container_width=True, key="btn_reset_usr"):
                 st.session_state["uploader_key"] += 1
                 st.session_state["generated_results"] = None
                 st.rerun()
         with col3:
-            if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_user"):
+            if st.button("🚪 ออกจากระบบ", use_container_width=True, key="btn_logout_usr"):
                 st.session_state["logged_in"] = False
                 st.session_state["current_user"] = ""
                 st.session_state["is_admin"] = False
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
-                clear_session_token()
+                clear_params()
                 st.rerun()
 
     with st.sidebar:
@@ -300,13 +308,13 @@ def main_app():
         input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
         input_gemini = st.text_input("Gemini API Key:", value=st.session_state["gemini_api_key"], type="password")
         
-        if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary", key="btn_save_keys"):
+        if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary", key="btn_save_k"):
             st.session_state["openai_api_key"] = input_openai.strip()
             st.session_state["gemini_api_key"] = input_gemini.strip()
             
             user_name = st.session_state.get("current_user", "")
             if user_name:
-                if user_name not in user_db:
+                if user_name not in user_db or not isinstance(user_db[user_name], dict):
                     user_db[user_name] = {"password": "", "status": "Approved", "gemini_api_key": "", "openai_api_key": "", "token": ""}
                 user_db[user_name]["gemini_api_key"] = input_gemini.strip()
                 user_db[user_name]["openai_api_key"] = input_openai.strip()
@@ -375,8 +383,8 @@ def main_app():
     def get_available_gemini_models(api_key):
         if not HAS_GEMINI:
             return ["gemini-1.5-flash"]
-        genai.configure(api_key=api_key)
         try:
+            genai.configure(api_key=api_key)
             valid_models = []
             for m in genai.list_models():
                 if 'generateContent' in m.supported_generation_methods:
@@ -423,7 +431,7 @@ def main_app():
                     continue
                     
             try: genai.delete_file(g_file.name)
-            except: pass
+            except Exception: pass
             if os.path.exists(tmp_path): os.remove(tmp_path)
         else:
             img = Image.open(uploaded_file).convert("RGB")
