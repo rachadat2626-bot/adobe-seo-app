@@ -12,21 +12,8 @@ import json
 import uuid
 import gc
 
-# 1. ตั้งค่าหน้าเว็บเป็นคำสั่งแรกเสมอ
-st.set_page_config(page_title="SEO Generator", layout="wide")
-
-# 2. ซ่อน UI ของ Streamlit ทั้งหมด
-st.markdown("""
-    <style>
-    [data-testid="stHeader"] { display: none; }
-    footer { visibility: hidden; }
-    .viewerBadge_container__1QSob, .viewerBadge_link__1S137 { display: none !important; }
-    </style>
-""", unsafe_allow_html=True)
-
 Image.MAX_IMAGE_PIXELS = None
 
-# ตรวจสอบ Library ปลอดภัย
 try:
     import google.generativeai as genai
     HAS_GEMINI = True
@@ -39,12 +26,49 @@ try:
 except Exception:
     HAS_OPENAI = False
 
-# ------------------------------------------
-# 3. ระบบจัดการ User แบบปลอดภัย ป้องกัน File System Lock
-# ------------------------------------------
+st.set_page_config(page_title="SEO Generator", layout="wide")
+
+st.markdown("""
+    <style>
+    [data-testid="stHeader"] { display: none; }
+    footer { visibility: hidden; }
+    .viewerBadge_container__1QSob, .viewerBadge_link__1S137 { display: none !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+def get_param(key):
+    try:
+        if hasattr(st, "query_params"):
+            return st.query_params.get(key, None)
+        elif hasattr(st, "experimental_get_query_params"):
+            params = st.experimental_get_query_params()
+            res = params.get(key, None)
+            return res[0] if res else None
+    except Exception:
+        pass
+    return None
+
+def set_param(key, val):
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params[key] = val
+        elif hasattr(st, "experimental_set_query_params"):
+            st.experimental_set_query_params(**{key: val})
+    except Exception:
+        pass
+
+def clear_params():
+    try:
+        if hasattr(st, "query_params"):
+            st.query_params.clear()
+        elif hasattr(st, "experimental_set_query_params"):
+            st.experimental_set_query_params()
+    except Exception:
+        pass
+
 DB_FILE = "users_db.json"
 
-def safe_load_users():
+def load_users():
     if os.path.exists(DB_FILE):
         try:
             with open(DB_FILE, "r", encoding="utf-8") as f:
@@ -54,12 +78,12 @@ def safe_load_users():
             return {}
     return {}
 
-def safe_save_users(db):
+def save_users(db):
     try:
         with open(DB_FILE, "w", encoding="utf-8") as f:
             json.dump(db, f, ensure_ascii=False, indent=2)
     except Exception:
-        pass  # ข้ามกรณีเพอร์มิชชันโดนล็อกบน Cloud
+        pass
 
 try:
     ADMIN_USER = st.secrets.get("ADMIN_USER", "superadmin")
@@ -68,15 +92,8 @@ except Exception:
     ADMIN_USER = "superadmin"
     ADMIN_PASS = "gappy789"
 
-# โหลดฐานข้อมูล
-if "global_user_db" not in st.session_state:
-    st.session_state["global_user_db"] = safe_load_users()
+user_db = load_users()
 
-user_db = st.session_state["global_user_db"]
-
-# ------------------------------------------
-# 4. Session State Initialization
-# ------------------------------------------
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "current_user" not in st.session_state:
@@ -92,16 +109,32 @@ if "uploader_key" not in st.session_state:
 if "generated_results" not in st.session_state:
     st.session_state["generated_results"] = None
 
-# ------------------------------------------
-# 5. ฟังก์ชันสร้างภาพพรีวิวบีบอัดจิ๋ว (ประหยัด RAM 99%)
-# ------------------------------------------
+query_token = get_param("session_token")
+if query_token and not st.session_state["logged_in"]:
+    if query_token == f"admin_token_{ADMIN_PASS}":
+        st.session_state["logged_in"] = True
+        st.session_state["current_user"] = ADMIN_USER
+        st.session_state["is_admin"] = True
+        if ADMIN_USER in user_db and isinstance(user_db[ADMIN_USER], dict):
+            st.session_state["gemini_api_key"] = user_db[ADMIN_USER].get("gemini_api_key", "")
+            st.session_state["openai_api_key"] = user_db[ADMIN_USER].get("openai_api_key", "")
+    else:
+        for u, data in user_db.items():
+            if isinstance(data, dict) and data.get("token") == query_token and data.get("status") == "Approved":
+                st.session_state["logged_in"] = True
+                st.session_state["current_user"] = u
+                st.session_state["is_admin"] = False
+                st.session_state["gemini_api_key"] = data.get("gemini_api_key", "")
+                st.session_state["openai_api_key"] = data.get("openai_api_key", "")
+                break
+
 def make_fast_thumbnail(uploaded_file, max_size=150):
     try:
         uploaded_file.seek(0)
         img = Image.open(uploaded_file).convert("RGB")
         img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
         buf = BytesIO()
-        img.save(buf, format="JPEG", quality=60, optimize=True)
+        img.save(buf, format="JPEG", quality=70, optimize=True)
         buf.seek(0)
         del img
         gc.collect()
@@ -109,9 +142,6 @@ def make_fast_thumbnail(uploaded_file, max_size=150):
     except Exception:
         return None
 
-# ------------------------------------------
-# 6. หน้า Login & Register
-# ------------------------------------------
 def login_and_register_screen():
     st.title("🔒 เข้าสู่ระบบ / สมัครสมาชิก")
     tab1, tab2 = st.tabs(["🔑 เข้าสู่ระบบ (Login)", "📝 สมัครสมาชิก (Register)"])
@@ -124,6 +154,8 @@ def login_and_register_screen():
             
             if submit_login:
                 if username == ADMIN_USER and password == ADMIN_PASS:
+                    token = f"admin_token_{ADMIN_PASS}"
+                    set_param("session_token", token)
                     st.session_state["logged_in"] = True
                     st.session_state["current_user"] = username
                     st.session_state["is_admin"] = True
@@ -131,17 +163,22 @@ def login_and_register_screen():
                         st.session_state["gemini_api_key"] = user_db[username].get("gemini_api_key", "")
                         st.session_state["openai_api_key"] = user_db[username].get("openai_api_key", "")
                     st.success("✅ เข้าสู่ระบบสำเร็จ (Admin)")
-                    time.sleep(0.3)
+                    time.sleep(0.5)
                     st.rerun()
                 elif username in user_db and isinstance(user_db[username], dict) and user_db[username].get("password") == password:
                     if user_db[username].get("status") == "Approved":
+                        token = str(uuid.uuid4())
+                        user_db[username]["token"] = token
+                        save_users(user_db)
+                        
+                        set_param("session_token", token)
                         st.session_state["logged_in"] = True
                         st.session_state["current_user"] = username
                         st.session_state["is_admin"] = False
                         st.session_state["gemini_api_key"] = user_db[username].get("gemini_api_key", "")
                         st.session_state["openai_api_key"] = user_db[username].get("openai_api_key", "")
                         st.success("✅ เข้าสู่ระบบสำเร็จ")
-                        time.sleep(0.3)
+                        time.sleep(0.5)
                         st.rerun()
                     else:
                         st.warning("⏳ บัญชีของคุณอยู่ระหว่างรอ Admin อนุมัติการใช้งาน")
@@ -167,14 +204,12 @@ def login_and_register_screen():
                         "password": new_pass, 
                         "status": "Pending",
                         "gemini_api_key": "",
-                        "openai_api_key": ""
+                        "openai_api_key": "",
+                        "token": ""
                     }
-                    safe_save_users(user_db)
+                    save_users(user_db)
                     st.success("🎉 สมัครสมาชิกเรียบร้อยแล้ว! กรุณารอ Admin อนุมัติการใช้งาน")
 
-# ------------------------------------------
-# 7. หน้า Dashboard สำหรับ Admin
-# ------------------------------------------
 def admin_dashboard():
     st.title("🛡️ ระบบจัดการหลังบ้าน (Admin Dashboard)")
     st.caption("หน้าต่างนี้เห็นเฉพาะ Admin เท่านั้น")
@@ -199,23 +234,20 @@ def admin_dashboard():
             if data.get("status") == "Pending":
                 if col3.button("✅ อนุมัติ", key=f"app_{user}"):
                     user_db[user]["status"] = "Approved"
-                    safe_save_users(user_db)
+                    save_users(user_db)
                     st.rerun()
             else:
                 if col3.button("⛔ ระงับ", key=f"rev_{user}"):
                     user_db[user]["status"] = "Pending"
-                    safe_save_users(user_db)
+                    save_users(user_db)
                     st.rerun()
                     
             if col4.button("🗑️ ลบ", key=f"del_{user}"):
                 del user_db[user]
-                safe_save_users(user_db)
+                save_users(user_db)
                 st.rerun()
             st.divider()
 
-# ------------------------------------------
-# 8. หน้าต่างแอปพลิเคชันหลัก
-# ------------------------------------------
 def main_app():
     if st.session_state.get("is_admin", False):
         if "show_admin_panel" not in st.session_state:
@@ -248,6 +280,7 @@ def main_app():
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
+                clear_params()
                 gc.collect()
                 st.rerun()
     else:
@@ -266,6 +299,7 @@ def main_app():
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
                 st.session_state["generated_results"] = None
+                clear_params()
                 gc.collect()
                 st.rerun()
 
@@ -283,10 +317,10 @@ def main_app():
             user_name = st.session_state.get("current_user", "")
             if user_name:
                 if user_name not in user_db or not isinstance(user_db[user_name], dict):
-                    user_db[user_name] = {"password": "", "status": "Approved", "gemini_api_key": "", "openai_api_key": ""}
+                    user_db[user_name] = {"password": "", "status": "Approved", "gemini_api_key": "", "openai_api_key": "", "token": ""}
                 user_db[user_name]["gemini_api_key"] = input_gemini.strip()
                 user_db[user_name]["openai_api_key"] = input_openai.strip()
-                safe_save_users(user_db)
+                save_users(user_db)
                 
             st.success("✅ บันทึก API Keys เรียบร้อยแล้ว (จำค่าไว้ถาวร)!")
 
@@ -305,17 +339,17 @@ def main_app():
         if not s: return ""
         s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
         s = re.sub(r"[^A-Za-z0-9, ]+", " ", s)
-        return re.sub(r"\s+", " ", s).strip()
+        return re.sub(r"\\s+", " ", s).strip()
 
     def clean_title_ascii(s):
         if not s: return ""
         s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
         s = re.sub(r"[^A-Za-z0-9 ]+", " ", s)
-        return re.sub(r"\s+", " ", s).strip()
+        return re.sub(r"\\s+", " ", s).strip()
 
     def parse_ai_response(text, is_video=False, is_vector=False):
-        title_match = re.search(r'TITLE:\s*(.*)', text, re.IGNORECASE)
-        kw_match = re.search(r'KEYWORDS:\s*(.*)', text, re.IGNORECASE)
+        title_match = re.search(r'TITLE:\\s*(.*)', text, re.IGNORECASE)
+        kw_match = re.search(r'KEYWORDS:\\s*(.*)', text, re.IGNORECASE)
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         first_line = lines[0] if lines else ""
         last_line = lines[-1] if lines else ""
@@ -374,7 +408,7 @@ def main_app():
 
         if is_svg:
             svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
-            svg_prompt = f"{prompt}\n\nThis is SVG vector illustration code/metadata:\n{svg_text}"
+            svg_prompt = prompt + "\\n\\nThis is SVG vector illustration code/metadata:\\n" + svg_text
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
@@ -390,7 +424,7 @@ def main_app():
             eps_bytes = uploaded_file.read()
             eps_text = eps_bytes[:5000].decode('ascii', errors='ignore')
             clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
-            eps_prompt = f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Metadata/Header:\n{clean_eps_info}"
+            eps_prompt = prompt + "\\n\\nFilename: " + uploaded_file.name + "\\nEPS Vector Metadata/Header:\\n" + clean_eps_info
             for m_name in models_to_try:
                 try:
                     model = genai.GenerativeModel(m_name)
@@ -464,7 +498,7 @@ def main_app():
             svg_text = uploaded_file.read().decode('utf-8', errors='ignore')[:10000]
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"{prompt}\n\nSVG Vector Code:\n{svg_text}"}],
+                messages=[{"role": "user", "content": prompt + "\\n\\nSVG Vector Code:\\n" + svg_text}],
                 max_tokens=300
             )
             return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
@@ -475,7 +509,7 @@ def main_app():
             clean_eps_info = re.sub(r'[^A-Za-z0-9 ]+', ' ', eps_text)[:2000]
             res = client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"{prompt}\n\nFilename: {uploaded_file.name}\nEPS Vector Info:\n{clean_eps_info}"}],
+                messages=[{"role": "user", "content": prompt + "\\n\\nFilename: " + uploaded_file.name + "\\nEPS Vector Info:\\n" + clean_eps_info}],
                 max_tokens=300
             )
             return parse_ai_response(res.choices[0].message.content, is_video, is_vector)
@@ -528,13 +562,13 @@ def main_app():
                                 else:
                                     st.info(f"🖼️ [{idx}] {file.name[:12]}...")
                             elif ext in ['.mp4', '.mov', '.avi', '.webm']:
-                                st.info(f"🎥 Video\n[{idx}] {file.name[:12]}...")
+                                st.info(f"🎥 Video\\n[{idx}] {file.name[:12]}...")
                             elif ext == '.svg':
-                                st.info(f"🎨 SVG Vector\n[{idx}] {file.name[:12]}...")
+                                st.info(f"🎨 SVG Vector\\n[{idx}] {file.name[:12]}...")
                             elif ext == '.eps':
-                                st.info(f"📐 EPS Vector\n[{idx}] {file.name[:12]}...")
+                                st.info(f"📐 EPS Vector\\n[{idx}] {file.name[:12]}...")
                             else:
-                                st.info(f"📄 File\n[{idx}] {file.name[:12]}...")
+                                st.info(f"📄 File\\n[{idx}] {file.name[:12]}...")
                             status_placeholders[file.name] = st.empty()
                             status_placeholders[file.name].caption("⏳ รอประมวลผล")
         except Exception:
@@ -585,9 +619,6 @@ def main_app():
             key="btn_download_csv"
         )
 
-# ------------------------------------------
-# 9. Main Router
-# ------------------------------------------
 if not st.session_state["logged_in"]:
     login_and_register_screen()
 else:
