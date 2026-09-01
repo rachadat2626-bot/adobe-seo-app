@@ -27,7 +27,6 @@ except ImportError:
 
 st.set_page_config(page_title="SEO Generator", layout="wide")
 
-# ซ่อน UI ของ Streamlit ทั้งหมด
 st.markdown("""
     <style>
     [data-testid="stHeader"] { display: none; }
@@ -64,7 +63,7 @@ except Exception:
 user_db = load_users()
 
 # ==========================================
-# 2. ระบบจำสถานะเมื่อ Refresh หน้าจอ (Auto-Login & State Persistence)
+# 2. ตัวแปรความจำสำรอง (Session State)
 # ==========================================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -78,6 +77,10 @@ if "gemini_api_key" not in st.session_state:
     st.session_state["gemini_api_key"] = ""
 if "uploader_key" not in st.session_state:
     st.session_state["uploader_key"] = 0
+
+# ตัวแปรสำหรับจดจำไฟล์ CSV เพื่อให้โหลดซ้ำได้โดยไม่หาย
+if "generated_results" not in st.session_state:
+    st.session_state["generated_results"] = None
 
 query_token = st.query_params.get("session_token", None)
 if query_token and not st.session_state["logged_in"]:
@@ -227,6 +230,7 @@ def main_app():
     with col2:
         if st.button("🔄 ทำรายการใหม่", use_container_width=True):
             st.session_state["uploader_key"] += 1
+            st.session_state["generated_results"] = None  # เคลียร์ไฟล์ CSV เก่า
             st.rerun()
     with col3:
         if st.session_state["is_admin"]:
@@ -240,6 +244,7 @@ def main_app():
                 st.session_state["is_admin"] = False
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
+                st.session_state["generated_results"] = None
                 st.query_params.clear()
                 st.rerun()
 
@@ -251,6 +256,7 @@ def main_app():
                 st.session_state["is_admin"] = False
                 st.session_state["openai_api_key"] = ""
                 st.session_state["gemini_api_key"] = ""
+                st.session_state["generated_results"] = None
                 st.query_params.clear()
                 st.rerun()
 
@@ -259,8 +265,6 @@ def main_app():
         api_choice = st.radio("🎯 เลือก AI Engine:", ["Gemini API (Google)", "OpenAI API (GPT-4o-mini)"])
         st.write("---")
         input_openai = st.text_input("OpenAI API Key (GPT-4o-mini):", value=st.session_state["openai_api_key"], type="password")
-        
-        # ลบคำว่า (ฟรี) ออกตามคำขอ
         input_gemini = st.text_input("Gemini API Key:", value=st.session_state["gemini_api_key"], type="password")
         
         if st.button("💾 บันทึก API Keys", use_container_width=True, type="primary"):
@@ -477,11 +481,22 @@ def main_app():
                     except Exception as e:
                         status_placeholders[file.name].error(f"❌ {e}")
                     bar.progress((idx + 1) / len(uploaded_files))
+                
                 if results:
-                    st.success("🎉 เสร็จสมบูรณ์! พร้อมดาวน์โหลดไฟล์ CSV")
-                    df = pd.DataFrame(results)
-                    st.dataframe(df[["Filename", "Title", "Keywords", "Category", "Release Info", "Editorial"]])
-                    st.download_button("📥 ดาวน์โหลด CSV สำหรับ Adobe Stock", data=df.to_csv(index=False, encoding="utf-8-sig"), file_name="adobe_stock_seo.csv", mime="text/csv", type="primary")
+                    st.session_state["generated_results"] = results # เซฟผลลัพธ์ลงความจำ
+
+    # โชว์ปุ่มดาวน์โหลดค้างไว้เสมอ หากมีข้อมูลในความจำ
+    if st.session_state.get("generated_results"):
+        st.success("🎉 เสร็จสมบูรณ์! พร้อมดาวน์โหลดไฟล์ CSV")
+        df = pd.DataFrame(st.session_state["generated_results"])
+        st.dataframe(df[["Filename", "Title", "Keywords", "Category", "Release Info", "Editorial"]])
+        st.download_button(
+            label="📥 ดาวน์โหลด CSV สำหรับ Adobe Stock", 
+            data=df.to_csv(index=False, encoding="utf-8-sig"), 
+            file_name="adobe_stock_seo.csv", 
+            mime="text/csv", 
+            type="primary"
+        )
 
 # ==========================================
 # 6. ตัวควบคุมการแสดงผล
